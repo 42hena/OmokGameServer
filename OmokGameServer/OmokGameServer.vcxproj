@@ -128,23 +128,37 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CNetLibrary.cpp" />
+    <ClCompile Include="COmokBoard.cpp" />
     <ClCompile Include="CPacket.cpp" />
+    <ClCompile Include="CPDH.cpp" />
+    <ClCompile Include="CRoom.cpp" />
     <ClCompile Include="CServer.cpp" />
+    <ClCompile Include="CUser.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="UserHistory.cpp" />
+    <ClCompile Include="UserRoomInfo.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CLFQueue.h" />
     <ClInclude Include="CLFStack.h" />
+    <ClInclude Include="CMonitoring.h" />
     <ClInclude Include="CNetLibrary.h" />
+    <ClInclude Include="COmokBoard.h" />
     <ClInclude Include="CPacket.h" />
+    <ClInclude Include="CPDH.h" />
+    <ClInclude Include="CPool.h" />
     <ClInclude Include="CRoom.h" />
     <ClInclude Include="CServer.h" />
     <ClInclude Include="CUser.h" />
+    <ClInclude Include="GameRecord.h" />
     <ClInclude Include="IGame.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClInclude>
     <ClInclude Include="IShop.h" />
     <ClInclude Include="Protocol.h" />
+    <ClInclude Include="UserHistory.h" />
+    <ClInclude Include="UserRoomInfo.h" />
+    <ClInclude Include="Util.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

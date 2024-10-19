@@ -1,38 +1,37 @@
 #pragma once
-#include <memory.h>
 
-//#define TEST 1
+#include <memory.h>
 
 class CRBuffer {
 public:
 	// 생성자
 	CRBuffer(void)
+		: _bufferSize(4000)
 	{
-		int size = 4000;
-		bufferStart = new char[size];
-		rear = front = bufferStart;
-		bufferSize = size;
-		bufferEnd = bufferStart + bufferSize;
+		_bufferStart = new char[_bufferSize];
+		_rear = _front = _bufferStart;
+
+		_bufferEnd = _bufferStart + _bufferSize;
 	}
 	
 	CRBuffer(int size)
+		: _bufferSize(size)
 	{
-		bufferStart = new char[size + 1];
-		rear = front = bufferStart;
-		bufferSize = size + 1;
-		bufferEnd = bufferStart + bufferSize;
+		_bufferStart = new char[_bufferSize];
+		_rear = _front = _bufferStart;
+		_bufferEnd = _bufferStart + _bufferSize;
 	}
 
 	// 소멸자
 	~CRBuffer()
 	{
-		delete[]bufferStart;
+		delete[] _bufferStart;
 	}
 
 	// Get total buffer size
 	int		GetBufferSize(void)
 	{
-		return (bufferSize);
+		return (_bufferSize);
 	}
 
 	int		GetUseSize(void)
@@ -40,40 +39,40 @@ public:
 		char* prevFront;
 		char* prevRear;
 
-		prevRear = rear;
-		prevFront = front;
+		prevRear = _rear;
+		prevFront = _front;
 		if (prevFront <= prevRear)
 		{
 			return (prevRear - prevFront);
 		}
 		else
 		{
-			return (prevRear + bufferSize - prevFront);
+			return (prevRear + _bufferSize - prevFront);
 		}
 	}
 
 	int		GetFreeSize(void)
 	{
-		return (bufferSize - 1 - GetUseSize());
+		return _bufferSize - 1 - GetUseSize();
 	}
 
 	int		DirectEnqueueSize(void)
 	{
 		char* prevFront;
 
-		prevFront = front;
-		if (prevFront == bufferStart)
+		prevFront = _front;
+		if (prevFront == _bufferStart)
 		{
-			return ((bufferEnd) - rear - 1);
+			return _bufferEnd - _rear - 1;
 		}
 		else
 		{
-			if (prevFront <= rear)
+			if (prevFront <= _rear)
 			{
-				return (bufferEnd - rear);
+				return _bufferEnd - _rear;
 			}
 			else
-				return prevFront - rear - 1;
+				return prevFront - _rear - 1;
 		}
 	}
 
@@ -81,18 +80,18 @@ public:
 	{
 		char* prevRear;
 
-		prevRear = rear;
-		if (front <= prevRear)
+		prevRear = _rear;
+		if (_front <= prevRear)
 		{
-			return prevRear - front;
+			return prevRear - _front;
 		}
 		else
 		{
-			return bufferEnd - front;
+			return _bufferEnd - _front;
 		}
 	}
 
-	int		Enqueue(char* chpData, int iSize)
+	int		Enqueue(char* pData, int iSize)
 	{
 		int directEndSize;
 		int freeSize;
@@ -103,113 +102,60 @@ public:
 			directEndSize = DirectEnqueueSize();
 			if (directEndSize < iSize)
 			{
-				memcpy(rear, chpData, directEndSize);
-				memcpy(bufferStart, chpData + directEndSize, iSize - directEndSize);
+				memcpy(_rear, pData, directEndSize);
+				memcpy(_bufferStart, pData + directEndSize, iSize - directEndSize);
 			}
 			else
 			{
-				memcpy(rear, chpData, iSize);
+				memcpy(_rear, pData, iSize);
 			}
-#ifdef TEST
-			int remain;
-			if (rear + iSize < bufferEnd) // <= 에서 < 로 교체
-			{
-				rear += iSize;
-			}
-			else
-			{
-				remain = rear + iSize - bufferEnd;
-				rear = bufferStart + remain;
-			}
-
-			return iSize;
-#endif
-#ifndef TEST
 			int ret = MoveRear(iSize);
 
 			if (ret != iSize)
 			{
-				Sleep(0);
+				DebugBreak();
 			}
 
-			return (iSize);
-#endif
+			return iSize;
 		}
 		else
-			return (0);
+			return 0;
 	}
 
-	int		Dequeue(char* chpDest, int iSize)
+	int		Dequeue(char* pDest, int size)
 	{
-#ifdef TEST
-		int directEndSize;
-		int useSize;
-
-		useSize = GetUseSize();
-
-		if (useSize >= iSize)
+		int ret = Peek(pDest, size);
+		if (ret != size)
 		{
-			directEndSize = DirectDequeueSize();
-			if (directEndSize < iSize)
-			{
-				memcpy(chpDest, front, directEndSize);
-				memcpy(chpDest + directEndSize, bufferStart, iSize - directEndSize);
-			}
-			else
-			{
-				memcpy(chpDest, front, iSize);
-			}
-			if (front + iSize < bufferEnd) // <= 에서 < 로 교체
-			{
-				front += iSize;
-			}
-			else
-			{
-				int remain = front + iSize - bufferEnd;
-				front = bufferStart + remain;
-			}
-
-			return (iSize);
-		}
-		else
-			return (0);
-#endif
-#ifndef TEST
-		int ret = Peek(chpDest, iSize);
-		if (ret != iSize)
-		{
-			exit(0);
-			Sleep(0);
+			DebugBreak();
 		}
 		int ret1 = MoveFront(ret);
 		if (ret1 != ret)
 		{
-			exit(0);
-			Sleep(0);
+			DebugBreak();
 		}
 		return  ret1;
-#endif
 	}
 
-	int		Peek(char* chpDest, int iSize)
+	int		Peek(char* pDest, int size)
 	{
 		int directEndSize;
-		if (GetUseSize() >= iSize)
+		if (GetUseSize() >= size)
 		{
 			directEndSize = DirectDequeueSize();
-			if (directEndSize < iSize)
+			if (directEndSize < size)
 			{
-				memcpy(chpDest, front, directEndSize);
-				memcpy(chpDest + directEndSize, bufferStart, iSize - directEndSize);
+				memcpy(pDest, _front, directEndSize);
+				memcpy(pDest + directEndSize, _bufferStart, size - directEndSize);
 			}
 			else
 			{
-				memcpy(chpDest, front, iSize);
+				memcpy(pDest, _front, size);
 			}
-			return (iSize);
+			return size;
 		}
 		else
-			return (0);
+			return 0;
 	}
 
 	int		MoveRear(int size)
@@ -218,14 +164,14 @@ public:
 
 		if (size <= GetFreeSize())
 		{
-			if (rear + size < bufferEnd) // <= 에서 < 로 교체
+			if (_rear + size < _bufferEnd) // <= 에서 < 로 교체
 			{
-				rear += size;
+				_rear += size;
 			}
 			else
 			{
-				remain = rear + size - bufferEnd;
-				rear = bufferStart + remain;
+				remain = _rear + size - _bufferEnd;
+				_rear = _bufferStart + remain;
 			}
 			return size;
 		}
@@ -241,14 +187,14 @@ public:
 
 		if (size <= GetUseSize())
 		{
-			if (front + size < bufferEnd) // <= 에서 < 로 교체
+			if (_front + size < _bufferEnd) // <= 에서 < 로 교체
 			{
-				front += size;
+				_front += size;
 			}
 			else
 			{
-				remain = front + size - bufferEnd;
-				front = bufferStart + remain;
+				remain = _front + size - _bufferEnd;
+				_front = _bufferStart + remain;
 			}
 			return size;
 		}
@@ -260,28 +206,28 @@ public:
 
 	void	ClearBuffer(void)
 	{
-		rear = front = bufferStart;
+		_rear = _front = _bufferStart;
 	}
 
 	char* GetBufferPtr(void)
 	{
-		return bufferStart;
+		return _bufferStart;
 	}
 
 	char* GetFrontBufferPtr(void)
 	{
-		return front;
+		return _front;
 	}
 
 	char* GetRearBufferPtr(void)
 	{
-		return rear;
+		return _rear;
 	}
 
 private:
-	char* bufferStart;
-	char* bufferEnd;
-	char* rear;
-	char* front;
-	int		bufferSize;
+	char*	_bufferStart;
+	char*	_bufferEnd;
+	char*	_rear;
+	char*	_front;
+	int		_bufferSize;
 };

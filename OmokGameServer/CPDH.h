@@ -69,8 +69,6 @@ class CProcessPDH {
 public:
 	CProcessPDH(const std::wstring &filename);
 	
-
-	
 	long GetHandleCount();
 	long GetThreadCount();
 	long GetUserCpuInteger();

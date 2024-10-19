@@ -16,6 +16,9 @@
     <Filter Include="헤더 파일\보류">
       <UniqueIdentifier>{7675108e-94dc-4805-be3f-57c2d0c01f07}</UniqueIdentifier>
     </Filter>
+    <Filter Include="헤더 파일\완성">
+      <UniqueIdentifier>{20d152b6-0af4-4b95-ae5d-9ba8e11ba02f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -29,6 +32,24 @@
     </ClCompile>
     <ClCompile Include="CPacket.cpp">
       <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="UserHistory.cpp">
+      <Filter>헤더 파일\완성</Filter>
+    </ClCompile>
+    <ClCompile Include="UserRoomInfo.cpp">
+      <Filter>헤더 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="CUser.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="CRoom.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="COmokBoard.cpp">
+      <Filter>헤더 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="CPDH.cpp">
+      <Filter>헤더 파일</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -61,6 +82,30 @@
     </ClInclude>
     <ClInclude Include="IGame.h">
       <Filter>헤더 파일\보류</Filter>
+    </ClInclude>
+    <ClInclude Include="CPool.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="COmokBoard.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="Util.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="UserHistory.h">
+      <Filter>헤더 파일\완성</Filter>
+    </ClInclude>
+    <ClInclude Include="GameRecord.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="UserRoomInfo.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="CMonitoring.h">
+      <Filter>헤더 파일\보류</Filter>
+    </ClInclude>
+    <ClInclude Include="CPDH.h">
+      <Filter>헤더 파일</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

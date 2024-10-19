@@ -19,17 +19,15 @@
 #include "Session.h"
 #include "CBucketPool.h"
 
-#include "CNetworkClientLib.h"
-#include "CMonitorChatClient.h"
 #include "CNetLibrary.h"
 
 CNetLibrary::CNetLibrary()
 	: hIOCP(nullptr),
 	sessionID(0),
-	sessionTotalCount(0), 
-	acceptCount(0), 
-	recvCount(0), 
-	sendCount(0), 
+	_sessionCount(0), 
+	_acceptCount(0), 
+	_recvCount(0), 
+	_sendCount(0), 
 	listenSocket(INVALID_SOCKET),
 	indexPool(20000)
 {
@@ -152,6 +150,8 @@ void CNetLibrary::RecvPost(SSession* session)
 	//session->Record(session->sessionID, ref, 21);
 	//code = WSARecv(session->socket, wsabuf, bufCount, nullptr, &flag, (OVERLAPPED*)&session->recvOverlap, nullptr);
 	if (WSARecv(session->socket, wsabuf, bufCount, nullptr, &flag, (OVERLAPPED*)&session->recvOverlap, nullptr) == SOCKET_ERROR)
+	//DWORD sss = 0;
+	//if (WSARecv(session->socket, wsabuf, bufCount, &sss, &flag, (OVERLAPPED*)&session->recvOverlap, nullptr) == SOCKET_ERROR)
 	{
 		code = GetLastError();
 		if (code == ERROR_IO_PENDING)
@@ -176,7 +176,11 @@ void CNetLibrary::RecvPost(SSession* session)
 			return;
 		}
 	}
-	InterlockedIncrement(&recvCount);
+	else
+	{
+		int a = 0;
+	}
+	InterlockedIncrement(&_recvCount);
 }
 
 void CNetLibrary::SendPost(SSession* session)
@@ -208,7 +212,7 @@ void CNetLibrary::SendPost(SSession* session)
 			{
 				session->sendQ.Dequeue(ptr);
 				wsabuf[bufCount].buf = ptr->GetBufferPtr();
-				wsabuf[bufCount].len = ptr->GetDataSize() + 5;
+				wsabuf[bufCount].len = ptr->GetDataSize() + 2;
 				session->sendingArray[bufCount] = ptr;
 			}
 			session->sendCount = bufCount;
@@ -247,7 +251,7 @@ void CNetLibrary::SendPost(SSession* session)
 					return;
 				}
 			}
-			InterlockedIncrement(&sendCount);
+			InterlockedIncrement(&_sendCount);
 		}
 		else
 		{
@@ -295,6 +299,7 @@ unsigned int CNetLibrary::AcceptThread(LPVOID param)
 	{
 		errCode = GetLastError();
 		wprintf(L"bind Fail[%d]\n", errCode);
+		DebugBreak();
 		return (0);
 	}
 
@@ -316,7 +321,6 @@ unsigned int CNetLibrary::AcceptThread(LPVOID param)
 
 	listen(ptr->listenSocket, SOMAXCONN_HINT(65535));
 	addrlen = sizeof(SOCKADDR_IN);
-	
 	
 	// Accept Part
 	for( ; ; )
@@ -357,35 +361,18 @@ unsigned int CNetLibrary::AcceptThread(LPVOID param)
 		InetNtopW(AF_INET, &(addr.sin_addr), newSession->clientIP, INET_ADDRSTRLEN);
 		newSession->port = ntohs(addr.sin_port);
 		newSession->socket = clientSocket;
-		/*newSession->sessionID = ++(ptr->sessionID);
-		newSession->sessionID |= ((unsigned long long)index << 50);*/
 		newSession->recvQ.ClearBuffer();
 		newSession->sendFlag = 0;
 		newSession->disconnectFlag = 0;
-		
-		
-		//newSession->len = 0;
-
-
-		//newSession->sessionID = nextID;
 		if (newSession->sendQ.GetSize() > 0)
 			DebugBreak();
 		uintptr_t aa =InterlockedExchange(&newSession->sessionID, nextID);
 		retRefCount = InterlockedAdd(&newSession->IOCount, 0xffff'0001);
 		if (retRefCount <= 0)
 			DebugBreak();
-		//newSession->Record(newSession->sessionID, retRefCount, 61);
-		
-		/*uintptr_t now = InterlockedIncrement(&sssIdx);
-		now %= 131072;
-		sssarray[now].sessionID = nextID;
-		sssarray[now].socket = clientSocket;
-		sssarray[now].port = newSession->port;
-		InetNtopW(AF_INET, &(addr.sin_addr), sssarray[now].clientIP, INET_ADDRSTRLEN);
-		sssarray[now].type = 1;*/
 
-		InterlockedIncrement(&ptr->sessionTotalCount);
-		InterlockedIncrement(&ptr->acceptCount);
+		InterlockedIncrement(&ptr->_sessionCount);
+		InterlockedIncrement(&ptr->_acceptCount);
 
 		ptr->OnClientJoin(newSession->sessionID);
 
@@ -398,8 +385,7 @@ unsigned int CNetLibrary::AcceptThread(LPVOID param)
 			ptr->ReleaseSession(newSession->sessionID);
 		}
 	}
-	wprintf(L"Accept Thread Normal Exit\n"); // 파일로 다 뺄까?
-
+	
 	return (0);
 }
 
@@ -410,7 +396,7 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 	SExteneOverlap* overlap;
 	int errCode;
 	int code;
-	const int HeaderSize = 5;
+	const int HeaderSize = 2;
 	CPacket *packet;
 	WORD size;
 	long currentIOCount;
@@ -477,19 +463,14 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 			else
 			{
 				wprintf(L"Code: %d id:%lld sock:%lld\n", code, session->sessionID, session->socket);
-				Sleep(INFINITE);
 			}
 		}
-
-		//wprintf(L"byte:%d, key:%p, ovarlap:%p\n", byte, key, overlap);
-			//if (byte != code) 짤려서 올 수 있음.
-			//		DebugBreak();
 
 		if (overlap->mode == 0) // recv
 		{
 			int ret = session->recvQ.MoveRear(byte);
-			if (ret != byte)
-				DebugBreak();
+			/*if (ret != byte)
+				DebugBreak();*/
 
 			code = session->recvQ.GetUseSize();
 			saveID = session->sessionID;
@@ -506,13 +487,13 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 					DebugBreak();
 
 				int peekSize = session->recvQ.Peek(packet->GetBufferPtr(), HeaderSize);
-				if (peekSize != 5)
+				if (peekSize != 2)
 				{
 					DebugBreak();
 					break;
 				}
 
-				packet->GetHeader((char*)&size, 1, 2);
+				packet->GetHeader((char*)&size, 0, 2);
 
 				if (size > 512)
 				{
@@ -528,7 +509,6 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 					break;
 				}
 
-
 				int ret = session->recvQ.MoveFront(HeaderSize);
 				if (ret != HeaderSize)
 					DebugBreak();
@@ -543,18 +523,16 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 					DebugBreak();
 					break;
 				}
-				// ptr->OnMessage(session->sessionID, &packet);
 				if (saveID != session->sessionID)
 					DebugBreak();
 				ptr->OnMessage(session->sessionID, packet);
-				code -= ret + 5;
+				code -= ret + HeaderSize;
 			}
-
-			ptr->RecvPost(session);
+			if (byte != 0)
+				ptr->RecvPost(session);
 		}
 		if (overlap->mode == 1) // send
 		{
-			// send통지 처리
 			for (int i = 0; i < session->sendCount; ++i)
 			{
 				session->sendingArray[i]->subRef();
@@ -566,8 +544,6 @@ unsigned int CNetLibrary::IOCPWorkerThread(LPVOID param)
 		}
 		
 		currentIOCount = InterlockedDecrement(&session->IOCount);
-		//long ref = InterlockedIncrement(&session->IOCount);
-		//session->Record(session->sessionID, currentIOCount, 31);
 		if (currentIOCount == 0)
 		{
 			ptr->ReleaseSession(session->sessionID);
@@ -625,8 +601,6 @@ bool CNetLibrary::Disconnect(unsigned __int64 sessionID)
 // ------
 
 
-	DebugBreak();
-
 	session = FindSession(sessionID);
 
 	refCount = InterlockedIncrement(&session->IOCount);
@@ -673,12 +647,12 @@ void CNetLibrary::SendMessages(unsigned __int64 sessionID, CPacket* packet)
 {
 	SSession* session;
 
-	BYTE code = 0x77;
+	//BYTE code = 0x77;
 	unsigned short len = 0;
-	BYTE rk = 1;
-	DWORD checkSum = 0;
-	long long data;
-	int index;
+	//BYTE rk = 1;
+	//DWORD checkSum = 0;
+	//long long data;
+	//int index;
 	long refCountRet;
 	// -----
 
@@ -713,7 +687,7 @@ void CNetLibrary::SendMessages(unsigned __int64 sessionID, CPacket* packet)
 	if (packet->encodeFlag == false)
 	{
 		len = packet->GetDataSize();
-		packet->SetHeader((char*)&len, 1, 2);
+		packet->SetHeader((char*)&len, 0, 2);
 		InterlockedExchange(&packet->encodeFlag, 1);
 	}
 
@@ -752,25 +726,36 @@ void CNetLibrary::Pause()
 
 // ##################################################
 
-long CNetLibrary::GetAcceptTPS()
+long CNetLibrary::GetAndInitAcceptTPS()
 {
-	return InterlockedExchange(&acceptCount, 0);
-	// return (acceptCount);
+	return InterlockedExchange(&_acceptCount, 0);
 }
 
-long CNetLibrary::GetRecvMessageTPS()
+long CNetLibrary::GetAndInitRecvMessageTPS()
 {
-	return InterlockedExchange(&recvCount, 0);
-	//return (recvCount);
+	return InterlockedExchange(&_recvCount, 0);
 }
 
-long CNetLibrary::GetSendMessageTPS()
+long CNetLibrary::GetAndInitSendMessageTPS()
 {
-	return InterlockedExchange(&sendCount, 0);
-	//return (sendCount);
+	return InterlockedExchange(&_sendCount, 0);
 }
 
 long CNetLibrary::GetSessionCount()
 {
-	return (sessionTotalCount);
+	return (_sessionCount);
+}
+
+
+void CNetLibrary::CountUpAcceptTPS()
+{
+	InterlockedIncrement(&_acceptCount);
+}
+void CNetLibrary::CountUpRecvTPS()
+{
+	InterlockedIncrement(&_recvCount);
+}
+void CNetLibrary::CountUpSendTPS()
+{
+	InterlockedIncrement(&_sendCount);
 }

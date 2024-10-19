@@ -3,40 +3,18 @@
 #include <Windows.h>
 #include "CBucketPool.h"
 
-struct aaa {
-	uintptr_t id;
-	int type;
-	long count;
-};
-
 class CPacket
 {
 public:
-
-	// 생성자
+	// default
 	CPacket();
-
-	// 상속 대비 + 소멸자
 	virtual ~CPacket();
 
 	// ####################################################################################################
 	// #                   Utils                                                                          #
 	// ####################################################################################################
 
-	// ##################################################
-	// # 제일 처음 상태로 되돌리기                      #
-	// #                                                #
-	// # Param  : (None)                                # 
-	// # return : (None)                                # 
-	// ##################################################
 	void	Clear(void);
-
-	// ##################################################
-	// # 최대 버퍼의 크기                               #
-	// #                                                #
-	// # Param  : (None)                                # 
-	// # return : (int : Max Buffer size)               # 
-	// ##################################################
 	int	GetBufferSize(void) { return iBufferSize; }
 
 	// ##################################################
@@ -82,7 +60,7 @@ public:
 	// Parameters: (char *)Src 포인터. (int)SrcSize.
 	// Return: (int)복사한 사이즈.
 	//////////////////////////////////////////////////////////////////////////
-	int		PutData(char* chpSrc, int iSrcSize);
+	int		PutData(const char* chpSrc, int iSrcSize);
 
 
 	/* ============================================================================= */
@@ -171,6 +149,7 @@ public:
 		return ptr;
 	}
 
+
 	static void Free(CPacket* packet)
 	{
 		// CBucketPool<Node>
@@ -239,5 +218,7 @@ public:
 	}
 
 };
+
+CPacket* InitPacket();
 
 #endif

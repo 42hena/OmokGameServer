@@ -49,10 +49,12 @@ public:
 	// ##################################################
 	// #                모니터링 요소들                 #
 	// ##################################################
-	long GetAcceptTPS();
-	long GetRecvMessageTPS();
-	long GetSendMessageTPS();
-
+	long GetAndInitAcceptTPS();
+	long GetAndInitRecvMessageTPS();
+	long GetAndInitSendMessageTPS();
+	void CountUpAcceptTPS();
+	void CountUpRecvTPS();
+	void CountUpSendTPS();
 	long GetSessionCount();
 
 	HANDLE GetJobEvent()
@@ -95,10 +97,10 @@ private:
 	//CMemoryPool<int> indexPool{16384, false};
 
 private:
-	long sessionTotalCount;
-	long acceptCount;
-	long recvCount;
-	long sendCount;
+	alignas (64) long _sessionCount;
+	alignas (64) long _acceptCount;
+	alignas (64) long _recvCount;
+	alignas (64) long _sendCount;
 };
 
 #endif

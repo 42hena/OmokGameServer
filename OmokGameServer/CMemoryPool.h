@@ -140,16 +140,6 @@ public:
 				(PVOID)((uintptr_t)next_node | now_stamp),
 				prev_top)) != prev_top);
 
-			/*do {
-				prev_top = m_pFreeNode;
-				real_top = (st_BLOCK_NODE*)((uintptr_t)prev_top & USER_MODE);
-				now_stamp = ((uintptr_t)prev_top & STAMP_MODE);
-				next_node = real_top->m_next;
-			} while (InterlockedCompareExchangePointer(
-				(PVOID*)&m_pFreeNode,
-				(PVOID)((uintptr_t)next_node | now_stamp),
-				prev_top) != prev_top);*/
-
 			if (m_placement_new_flag == true)
 			{
 				// excute placement new

@@ -318,12 +318,12 @@ CProcessPDH::CProcessPDH(const std::wstring& filename)
 		DebugBreak();
 
 	pdh = L"\\Process(" + filename + L")\\Pool Paged Bytes";
-	code = PdhAddCounter(processNPQuery, pdh.c_str(), NULL, &processP);
+	code = PdhAddCounter(processPQuery, pdh.c_str(), NULL, &processP);
 	if (code != ERROR_SUCCESS)
 		DebugBreak();
 
 	pdh = L"\\Process(" + filename + L")\\Pool Nonpaged Bytes";
-	code = PdhAddCounter(processPQuery, pdh.c_str(), NULL, &processNP);
+	code = PdhAddCounter(processNPQuery, pdh.c_str(), NULL, &processNP);
 	if (code != ERROR_SUCCESS)
 		DebugBreak();
 

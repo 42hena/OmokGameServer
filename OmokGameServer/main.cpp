@@ -22,35 +22,27 @@
 #include "Session.h"
 #include "Job.h"
 
-#include "CNetworkClientLib.h"
-#include "CMonitorChatClient.h"
 #include "CNetLibrary.h"
 #include "CServer.h"
 
 
 CServer server;
 
-int main()
+void RunServer()
 {
 	char keyboard;
 	bool keyFlag;
-// -----
-
-	timeBeginPeriod(1);
-
-	// 파일 읽기 등 초기화 작업이 필요.
-	// .ini 파일을 읽는 느낌으로 가야할 듯.
-
 	keyFlag = 0;
 	wprintf(L"Omok Game Server\n");
 	server.ExcuteServer(L"0.0.0.0", 12001, 2, 1, false, 1000);
 
-	for( ; ; )
+	for (; ; )
 	{
 		if (_kbhit())
 		{
 			keyboard = _getch();
-	/*		if (keyboard == 'z')
+			/*		
+			if (keyboard == 'z')
 			{
 				keyFlag = !keyFlag;
 				wprintf(L"Mode Change\n");
@@ -61,7 +53,7 @@ int main()
 			}
 			if (keyFlag && keyboard == 'l')
 			{
-				
+
 			}
 
 			if (keyFlag && keyboard == 'm')
@@ -71,7 +63,14 @@ int main()
 		}
 		Sleep(1000);
 	}
-	
+}
+
+int main()
+{
+	timeBeginPeriod(1);
+
+	RunServer();
+
 	timeEndPeriod(1);
 	return (0);
 }

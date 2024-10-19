@@ -2,12 +2,10 @@
 
 #include <string>
 
+//#include "Record.h"
+#include "UserHistory.h"
+#include "UserRoomInfo.h"
 
-struct SPos
-{
-	int y;
-	int x;
-};
 
 struct SLog
 {
@@ -27,146 +25,123 @@ public:
 		PLAYER2,
 		SPECTATOR
 	};
-	CUser()
-		: _nickName("unknown"),
-		_accountNo(0),
-		_inRoom(0),
-		_state(0),
-		_readyFlag(0),
-		_sessionId(0),
-		_lastUpdateTime(0),
-		
-		_win(0),
-		_lose(0),
-		_money(0)
-		
-	{
 
-	}
-	~CUser()
-	{
+public:
+	CUser();
+	~CUser() = default;
 
-	}
+public:	// delete
+	CUser(const CUser &rhs) = delete;
+	CUser(CUser&& rhs) = delete;
+	CUser& operator=(const CUser& rhs) = delete;
+	CUser& operator=(CUser&& rhs) = delete;
 
 public:
 	inline uintptr_t GetCurrentAccountNo() const
 	{
 		return _accountNo;
 	}
-
 	inline int GetCurrentState() const
 	{
-		return _state;
+		return static_cast<int>(_roomInfo._state);
+		//return _state;
 	}
-
 	inline uintptr_t GetMySessionId() const
 	{
 		return _sessionId;
 	}
-
-	inline int GetCurrentRoom() const
+	inline USHORT GetCurrentRoom() const
 	{
-		return _inRoom;
+		return _roomInfo.GetCurrentRoomNo();
+		//return _roomInfo._inRoomNo;
+		//return _inRoom;
 	}
-
-	inline const std::string& GetMyNickname() const
+	inline const std::wstring& GetMyNickname() const
 	{
 		return _nickName;
 	}
 
+public:
 	void RemovePosition()
 	{
-		_state = NONE;
+		_roomInfo.ClearPosition();
+		//_state = NONE;
 	}
 
 	void ChangePositionPlayer1()
 	{
-		_state = PLAYER1;
+		_roomInfo.ChangePositionToPlayerLeft();
+		// _state = PLAYER1;
 	}
 
 	void ChangePositionPlayer2()
 	{
-		_state = PLAYER2;
+		_roomInfo.ChangePositionToPlayerRight();
+		//_state = PLAYER2;
 	}
 
 	void ChangePositionSpectator()
 	{
-		_state = SPECTATOR;
+		_roomInfo.ChangePositionToSpectator();
+		// _state = SPECTATOR;
 	}
 
-	void EnterRoom(USHORT roomId)
+	void EnterRoom(USHORT roomNo)
 	{
-		_inRoom = roomId;
+		_roomInfo.EnterRoom(roomNo);
+		//_inRoom = roomNo;
 	}
 
 	void LeaveRoom()
 	{
-		_inRoom = 0;
+		_roomInfo.LeaveRoom();
+		//_inRoom = 0;
 	}
 
-	// ready 관련
+	// ready 관련 고쳐야 함.
 	void Ready()
 	{
-		if (_readyFlag)
+		_roomInfo.Ready();
+		/*if (_readyFlag)
 			DebugBreak();
-		_readyFlag = true;
+		_readyFlag = true;*/
 	}
 	void CancelReady()
 	{
-		if (!_readyFlag)
+		_roomInfo.CancelReady();
+		/*if (!_readyFlag)
 			DebugBreak();
-		_readyFlag = false;
+		_readyFlag = false;*/
 	}
 
 	void ReadyClear()
 	{
-		_readyFlag = false;
+		_roomInfo.ReadyClear();
+		//_readyFlag = false;
 	}
 
 	void Start()
 	{
 		Ready();
 	}
-
-	void SetDBData(int win, int lose, int money)
+	BYTE GetPosition()
 	{
-		if (_win < 0 || _lose < 0 || _money < 0)
-			DebugBreak();
-
-		_win = win;
-		_lose = lose;
-		_money = money;
+		return static_cast<BYTE>(_roomInfo.GetCurrentPosition());
 	}
-
-	void ChangeNickname(const std::string& changeNick)
-	{
-		_nickName = changeNick;
-	}
-
-	// 보류
-	void GameClear()
-	{
-		_readyFlag = 0;
-	}
+	void ChangeNickname(const std::wstring& changeNick);
+	void GameClear();
 
 	inline bool GetCurrentReadyFlag() const
 	{
-		return _readyFlag;
+		return _roomInfo._readyFlag;
 	}
 
 
-	void Win()
-	{
-		_win++;
-		_money += 150;
-	}
-	void Lost()
-	{
-		_lose++;
-		_money += 50;
-	}
+	void Win();
+	void Lost();
+	void Draw();
 
-	void Logging(WORD type, uintptr_t accountNo, WORD room, WORD state)
+	/*void Logging(WORD type, uintptr_t accountNo, WORD room, WORD state)
 	{
 		uintptr_t index = InterlockedIncrement(&logIndex);
 
@@ -176,21 +151,31 @@ public:
 		log[index].accountNo = accountNo;
 		log[index].roomId = room;
 		log[index].state = state;
-	}
+	}*/
+
+	
 
 public:
-	std::string _nickName;
+	std::wstring _nickName;
 	uintptr_t _accountNo;
-	int _inRoom;// 어느 방에 있는지
-	int _state;	// player인지, 관전자인지
-	bool _readyFlag;
 	uintptr_t	_sessionId;
 	uint32_t	_lastUpdateTime;
 
-	int _win;
-	int _lose;
-	int _money;
+	//int _win;
+	//int _lose;
+	//bool _readyFlag;
+	//int _inRoom;// 어느 방에 있는지
+	//int _state;	// player인지, 관전자인지
 
-	SLog log[300];
-	alignas (64) uintptr_t logIndex = 0;
+	UserHistory _history;
+	UserRoomInfo _roomInfo;
+
+	//Inventory _inventory;
+	//int _money;
+	//SLog log[300];
+	//alignas (64) uintptr_t logIndex = 0;
 };
+
+void WinProcedure(CUser*);
+void LoseProcedure(CUser*);
+void DrawProcedure(CUser*);

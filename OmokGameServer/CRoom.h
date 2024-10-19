@@ -5,12 +5,7 @@ class Player
 
 };
 
-struct Pos
-{
-	int x;
-	int y;
-};
-
+#include "COmokBoard.h"
 class IRoom
 {
 public:
@@ -27,13 +22,15 @@ public:
 	}
 
 	IRoom(const IRoom& rhs) = delete;
+	IRoom(IRoom&& rhs) = delete;
 	IRoom& operator=(const IRoom& rhs) = delete;
+	IRoom& operator=(IRoom&& rhs) = delete;
 
 public:
 	virtual void EnterRoom(uintptr_t accountNo, CUser* pNewUser) = 0;
 	virtual void LeaveRoom(uintptr_t accountNo, CUser* pOldUser) = 0;
 
-	int GetCurrentRoomNumber() const
+	USHORT GetCurrentRoomNumber() const
 	{
 		return _roomNum;
 	}
@@ -79,6 +76,10 @@ public:
 		else
 			return it->second;
 	}
+	USHORT GetRoomUserCount()
+	{
+		return _userMap.size();
+	}
 
 protected:
 	std::unordered_map<uint64_t, CUser*> _userMap;
@@ -104,17 +105,9 @@ public:
 	//CChatRoom();
 	CChatRoom()
 		:IRoom(0),
-		_gameFlag(0),
-		_turn(0)
+		_playerCnt(0)
 		//_stoneRecord
 	{
-		for (int i = 0; i < 15; ++i)
-		{
-			for (int j = 0; j < 15; ++j)
-			{
-				_board[i][j] = 0;
-			}
-		}
 	}
 	~CChatRoom()
 	{
@@ -151,63 +144,15 @@ public:
 		}
 	}
 
-	// 게임 쪽 생각해보기.
-	void BoardClear()
-	{
-		for (int i = 0; i < 15; ++i)
-		{
-			for (int j = 0; j < 15; ++j)
-			{
-				_board[i][j] = 0;
-			}
-		}
-		
-
-		// DB 저장 해야함.
-		// 승 패 누가 했는지
-		// 아이템 누가 몇개 뭐 썼는지
-		// dak.gg처럼 어떻게 두었는지.
-	}
 
 	bool PossibleStone(int x, int y)
 	{
-		if (x < 0 || x >= 15)
-			return false;
-		if (y < 0 || y >= 15)
-			return false;
-		return _board[x][y] ? false : true;
+		return _omokBoard.IsValidPos(x, y);
 	}
-
-	bool IsGameOver(int x, int y)
-	{
-		const int dx[] = { 1, 1, 1, 0, -1, -1, -1, 0 };
-		const int dy[] = { 1, 0, -1, 1, 1, 0, -1, -1 };
-		//for (int i = 0 ; i < )
-	}
-	
-	/*void ProcessingDB()
-	{
-
-	}*/
-
 
 	inline bool IsGameing() const
 	{
-		return _gameFlag;
-	}
-
-	void GameStart()
-	{
-		if (_gameFlag)
-			DebugBreak();
-		_gameFlag = true;
-	}
-
-	void GameEnd()
-	{
-		if (!_gameFlag)
-			DebugBreak();
-		_gameFlag = false;
+		return _omokBoard.IsGameing();
 	}
 	
 	inline uintptr_t GetPlayer1SessionId() const
@@ -241,6 +186,8 @@ public:
 				return false;
 			return true;
 		}
+		else if (position == 3)
+			return true;
 		else
 			DebugBreak();
 	}
@@ -253,12 +200,12 @@ public:
 		_players[1]._sId = 0;
 	}
 
-
 	void Player1Clear()
 	{
 		_players[0]._accountNo = 0;
 		_players[0]._sId = 0;
 	}
+
 	void Player2Clear()
 	{
 		_players[1]._accountNo = 0;
@@ -270,7 +217,6 @@ public:
 		_players[0]._accountNo = accountNo;
 		_players[0]._sId = sId;
 	}
-
 
 	void SetPlayer2(uintptr_t accountNo, uintptr_t sId)
 	{
@@ -316,131 +262,50 @@ public:
 		}
 	}
 
-	void ProcessRecord(int x, int y)
+	inline BYTE GetCurrentTurn()
 	{
-		_stoneRecord.push_back({ x, y });
+		return _omokBoard.GetCurrentPlayerTurn();
 	}
 
-	void ReDoRecord(int x, int y)
+	void pCountUp()
 	{
-		_stoneRecord.pop_back();
+		_playerCnt++;
+	}
+	void pCountDown()
+	{
+		_playerCnt--;
+	}
+	int GetPlayerCount()
+	{
+		return _playerCnt;
 	}
 
-	void PutStone(int x, int y, int position)
+	COmokBoard& GetBoard()
 	{
-		_board[x][y] = position;
-	}
-	void CancelStone(int x, int y)
-	{
-		_board[x][y] = 0;
+		return _omokBoard;
 	}
 
-
-	bool GameEnd(int x, int y, int player)
+	void TurnEnd()
 	{
-		const int directions[4][2] = {
-		   {1, 0}, // horizontal
-		   {0, 1}, // vertical
-		   {1, 1}, // diagonal1 (top-left to bottom-right)
-		   {1, -1} // diagonal2 (bottom-left to top-right)
-		};
-		const int WinCondition = 5;
-		const int BoardSize = 15;
-
-		for (int dir = 0; dir < 4; ++dir) {
-			int count = 1;
-
-			// Check in the positive direction
-			for (int step = 1; step < WinCondition; ++step) {
-				int nx = x + step * directions[dir][0];
-				int ny = y + step * directions[dir][1];
-
-				if (nx >= 0 && nx < BoardSize && ny >= 0 && ny < BoardSize && _board[nx][ny] == player) {
-					count++;
-				}
-				else {
-					break;
-				}
-			}
-
-			// Check in the negative direction
-			for (int step = 1; step < 5; ++step) {
-				int nx = x - step * directions[dir][0];
-				int ny = y - step * directions[dir][1];
-
-				if (nx >= 0 && nx < BoardSize && ny >= 0 && ny < BoardSize && _board[nx][ny] == player) {
-					count++;
-				}
-				else {
-					break;
-				}
-			}
-
-			// Check if we have enough stones in a row
-			if (count >= 5) {
-				return true;
-			}
-		}
-
-		return false;
+		_omokBoard.SwitchNext();
 	}
 
-	/*CUser* GetOppUser(int position)
+	// Omok Game Part
+	void PlaceStoneWrapper(int x, int y, int turn);
+	int CheckGameOverWrapper(int x, int y, int turn);
+	void ResetGameData();
+
+
+	void InitGameSetting()
 	{
-		if (position == 1)
-		{
-
-		}
-		else if (position == 2)
-		{
-
-		}
-		else
-			DebugBreak();
-
-	}*/
-
-	inline BYTE GetCurrentTurn() const
-	{
-		return _turn;
+		_omokBoard.ResetOmok();
+		_omokBoard.GameStart();
 	}
-	void InitTurn()
-	{
-		_turn = 0;
-	}
-
-	void NextTurn()
-	{
-		if (_turn == 0)
-			_turn = 1;
-		else if (_turn == 1)
-			_turn = 2;
-		else if (_turn == 2)
-			_turn = 1;
-	}
-
 private:
-	bool _gameFlag = 0;
+	//bool _gameFlag = 0;
 	SPlayerData _players[2];
-	std::vector<Pos> _stoneRecord;
-	int _board[15][15] = { 0 };
-	BYTE _turn;
+	int _playerCnt;
+	//BYTE _turn;
+	COmokBoard _omokBoard;
 };
-
-//int CChatRoom::num = 1;
-//CChatRoom::CChatRoom(uintptr_t roomNumber)
-//	: IRoom(roomNumber)
-//{
-//}
-//
-//CChatRoom::~CChatRoom()
-//{
-//}
-
-// Contents는 CRoom들을 들고 있을 거임.
-// player 들은 자신 소속을 알고 있음. empty(Lobby) 특정 방.
-// 만약 방에 들어가고 싶다?
-// 1. RoomManager를 확인하고 있을 경우 지정 -> 들어가기.
-// 2. 없다면 방을 만들고 들어가기.
-// 
 

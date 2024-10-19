@@ -19,6 +19,7 @@ enum {
 	en_EnterRoomRequest,
 	en_EnterRoomResponse,
 	en_EnterRoomStateResponse,
+	en_RoomMembers,
 
 	en_LeaveRoom = 400,
 	en_LeaveRoomRequest,
@@ -50,6 +51,11 @@ enum {
 
 	en_GameOverRecordResponse,
 	en_GameOverResponse,
+
+	en_GracefulShutdownRequest = 59000,
+	en_GracefulShutdownResponse = 59001,
+
+
 };
 
 // TODO List
@@ -59,3 +65,73 @@ enum {
 
 // ready만 끝나면 될 듯.
 
+
+
+
+
+// 최종
+// Login C->S			[1]
+// | type(2) | accountNo(8) nickLen(1) nickName(20)
+
+// Login S->C			[2]
+// | type(2) | accountNo(8) nickLen(1) nickName(20) status(1)
+
+// Create C->S			[201]
+// | type(2) | accountNo(8) roomLen(1) roomName(20)
+
+// Create S->C(User)	[202]
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(20) status(1)
+
+
+// Enter C->S			[301]
+// | type(2) | accountNo(8) roomNo(2)
+
+// Enter S->C(User)		[302]
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(max 20) status(1)
+
+// Enter S->C(BroadCast)	[303]
+// | type(2) | roomNo(2) nickLen(1) nickName(max 20)
+
+// Enter S->C(User) [304]
+// | type(2) | accountNo(8) numOfPeople(2) | [nickLen(1) nickName(max 20)]
+
+
+// Leave C->S [401]
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(max 20)
+
+// Leave S->C(User) [402]
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(max 20) status(1)
+
+// Leave C->S(BroadCast) [403]
+// | type(2) | roomNo(2) nickLen(1) nickName(max 20)
+
+
+// Chat C->S			[501]
+// | type(2) | accountNo(8) roomNo(2) chatLen(1) chatting(max 255)
+
+// Chat S->C(BroadCast) [502] (O)
+// | type(2) | accountNo(8) roomNo(2) nickLen(1) nickName(max 20) chatLen(1) chatName(max 255)
+
+
+
+
+
+
+
+// len(5) | type(2) roomNo(2) from(1) to(1) nicoLen(1) nickName(nickLen max 19)
+//en_ChangePositionPlayerRequest,[1001]
+// 
+// 
+// 
+//en_ChangePositionSpectatorRequest,[1002]
+//en_ChangePositionPlayerResponse,[1003]
+// *pPacket << type << pUser->_accountNo << roomNo << flag << from << to;
+//en_ChangePositionSpectatorResponse,[1004]
+
+
+
+// Echo C->S			[60000]
+// | type(2) | data(8)
+
+// Echo S->C			[60000]
+// | type(2) | data(8)

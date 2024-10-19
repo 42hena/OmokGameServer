@@ -6,6 +6,7 @@
 #include <string>
 #include <set>
 
+#include <algorithm>
 #include <WinSock2.h>
 #include <Pdh.h>
 #include <Windows.h>
@@ -23,19 +24,16 @@
 #include "ChatProtocol.h"
 #include "Session.h"
 
-//#include "CNetworkClientLib.h"
-//#include "CMonitorChatClient.h"
-
 #include "CNetLibrary.h"
 #include "CServer.h"
 
-#include "CPDH.h"
 #include "Protocol.h"
+#include "CPDH.h"
 
 CLFQueue<SJob> jobQ(500'001);
 
 std::unordered_map<unsigned __int64, CUser*> userManager;
-std::unordered_map<uintptr_t, uintptr_t> accountKey;
+//std::unordered_map<uintptr_t, uintptr_t> accountKey;
 
 alignas (64) uintptr_t messageRecvCount = 0;
 alignas (64) uintptr_t messageSendCount = 0;
@@ -45,36 +43,48 @@ alignas (64) uintptr_t sectorPacket = 0;
 
 // CServer
 CServer::CServer()
-	: userCount(0), updateCount(0)
+	: userCount(0), updateCount(0),
+
+	_createRoomPacketCount(0),
+	_enterRoomPacketCount(0),
+	_leaveRoomPacketCount(0),
+	_chatRoomPacketCount(0)
+
 {
 	int errCode;
 	int idx;
-	HANDLE hUpdateThread;
-	HANDLE hMonitorThread;
 	// -----
 
-	// TODO: 03-26
-	//monitorClientPtr = new CMonitorChatClient(1);
+	// Test 용도
+	for (int i = 1; i <= 500; ++i)
+	{
+		auto pRoom = _roomPool.Alloc();
+		pRoom->ChangeRoomNumber(i);
+		_roomManager.insert({ i, pRoom });
+	}
+
 
 	wprintf(L"CServer Constructor\n");
-	hUpdateThread = (HANDLE)_beginthreadex(nullptr, 0, UpdateThread, this, 0, nullptr);
-	if (hUpdateThread == nullptr)
+	hUpdateTh = (HANDLE)_beginthreadex(nullptr, 0, UpdateThread, this, 0, nullptr);
+	if (hUpdateTh == nullptr)
 	{
 		errCode = GetLastError();
-		wprintf(L"hUpdateThread Fail %d\n", errCode);
+		wprintf(L"hUpdateTh Fail %d\n", errCode);
 		return;
 	}
-	/*hMonitorThread = (HANDLE)_beginthreadex(nullptr, 0, MonitorThread, this, 0, nullptr);
-	if (hMonitorThread == nullptr)
+	hMonitorTh = (HANDLE)_beginthreadex(nullptr, 0, MonitorThread, this, 0, nullptr);
+	if (hMonitorTh == nullptr)
 	{
 		errCode = GetLastError();
-		wprintf(L"hMonitorThread Fail %d\n", errCode);
+		wprintf(L"hMonitorTh Fail %d\n", errCode);
 		return;
-	}*/
+	}
 }
 
 CServer::~CServer()
 {
+	WaitForSingleObject(hUpdateTh, INFINITE);
+	WaitForSingleObject(hMonitorTh, INFINITE);
 	wprintf(L"CServer Destructor\n");
 }
 
@@ -105,6 +115,27 @@ CUser* CServer::FindUser(unsigned __int64 sID)
 	return iter->second;
 }
 
+CChatRoom* CServer::FindRoom(WORD roomNo)
+{
+	auto iter = _roomManager.find(roomNo);
+	if (iter == _roomManager.end())
+	{
+		DebugBreak();
+		return (nullptr);	// 존재 안함
+	}
+	return iter->second;
+}
+
+CChatRoom* CServer::FindRoomTmp(WORD roomNo)
+{
+	auto iter = _roomManager.find(roomNo);
+	if (iter == _roomManager.end())
+	{
+		return (nullptr);	// 존재 안함
+	}
+	return iter->second;
+}
+
 void CServer::ReleaseUser(unsigned __int64 sID)
 {
 	CUser* pUser;
@@ -121,23 +152,26 @@ void CServer::ReleaseUser(unsigned __int64 sID)
 	size_t size = userManager.erase(sID);
 	if (size == 0)
 		DebugBreak();
+	uintptr_t accountNo = pUser->GetCurrentAccountNo();
 
 	WORD roomNo = pUser->GetCurrentRoom();
 	auto roomIt = _roomManager.find(roomNo);
 	if (roomIt == _roomManager.end())
 	{
-		;
+		int a = 0;;
 	}
 	else
 	{
 		CChatRoom* pRoom = roomIt->second;
-		uintptr_t accountNo = pUser->GetCurrentAccountNo();
 		pRoom->EraseUser(accountNo);
-		int ss = accountKey.erase(accountNo);
-		if (ss == 0)
-			DebugBreak();
+		RoomDown();
 
 	}
+	if (accountNo == 0)
+		DebugBreak();
+	int ss = _accountKey.erase(accountNo);
+	if (ss == 0)
+		DebugBreak();
 
 	InterlockedDecrement(&userCount);
 	userPool.Free(pUser);
@@ -149,7 +183,8 @@ unsigned int CServer::UpdateThread(LPVOID param)
 	DWORD WaitForSingleObjectRet;
 	SJob job;
 	int jobQRet;
-// -----
+	// =====
+
 	wprintf(L"UpdateThread Start\n");
 	for (;;)
 	{
@@ -179,11 +214,6 @@ unsigned int CServer::UpdateThread(LPVOID param)
 					ptr->ReleaseUser(job.sessionId);
 					break;
 				}
-				case en_JOB_TYPE::en_JobServerDown:
-					return (0);
-					break;
-				case en_JOB_TYPE::en_JobSystem: // 시스템 관련
-					break;
 				default:
 					DebugBreak(); // TODO????
 					break;
@@ -205,140 +235,103 @@ unsigned int CServer::UpdateThread(LPVOID param)
 }
 
 
-//unsigned int CServer::MonitorThread(LPVOID param)
-//{
-//	CServer* ptr = reinterpret_cast<CServer*>(param);
-//// -----
-//
-//	static DWORD firstTime;
-//	DWORD lastTime;
-//	DWORD sec, min, hour;
-//
-//	long flag, cpu, mem, sessionCnt, playerCnt, updateTPS, packetPoolCnt, JobPoolCnt;
-//	int total;
-//	char filename[256];
-//	// start
-//	firstTime = timeGetTime();
-//	
-//	FILE* fp;
-//	time_t currentTime;
-//	struct tm localTime;
-//
-//	
-//	CProcessPDH processPdh(L"CNetworkLib");
-//
-//
-//	for ( ; ; )
-//	{
-//		currentTime = time(NULL);
-//		localtime_s(&localTime, &currentTime);
-//		
-//		sprintf_s(filename, sizeof(filename), "file_%04d-%02d-%02d_%02d.txt",
-//			localTime.tm_year + 1900, localTime.tm_mon + 1, localTime.tm_mday,
-//			localTime.tm_hour);
-//		/*fopen_s(&fp, filename, "a+");
-//		if (fp == nullptr)
-//		{
-//			DebugBreak();
-//			return 1;
-//		}*/
-//		lastTime = timeGetTime();
-//		total = (lastTime - firstTime) / 1000;
-//		sec = total % 60;
-//		total /= 60;
-//		min = total % 60;
-//		total /= 60;
-//		hour = total % 60;
-//		
-//		total = 0;
-//		
-//		flag = 0;
-//		// CPU Mem 줄 cpu, mem
-//		
-//		for (int i = 0; i < 50; ++i)
-//		{
-//			for (int j = 0; j < 50; ++j)
-//			{
-//				total += secterList[i][j].size();
-//			}
-//		}
-//
-//		//flag, cpu, mem, sessionCnt, playerCnt, updateTPS, packetPoolCnt, JobPoolCnt;
-//		sessionCnt = ptr->GetUser();
-//		playerCnt = accountManager.size();// 삭제
-//
-//		updateTPS = ptr->GetMonitoringUpdateCount();
-//		packetPoolCnt = CPacket::GetUseNode();
-//		JobPoolCnt = jobQ.GetSize();
-//
-//
-//
-//		wprintf(L"Running Time:%3d h - %2d m - %2d s | server Status %d\n", hour, min, sec, flag);
-//		wprintf(L"Monitor: %d\n", flag);
-//		wprintf(L"Thread count: %d\n", processPdh.GetThreadCount());
-//		wprintf(L"--------------------------------------------------\n");
-//		wprintf(L"TotalSession:%d user:%d account:%llu sector:%d avg:%lf\n", ptr->GetSessionCount(), sessionCnt, accountManager.size(), total, (float)total / 2500 * 9);// manager 삭제
-//		wprintf(L"indexPool:%d characterPool:%d\n", ptr->GetIndexPoolUseSize(), ptr->GetUserPoolUseSize());
-//		wprintf(L"Accept:%d Recv:%d Send:%d\n", ptr->GetAcceptTPS(), ptr->GetRecvMessageTPS(), ptr->GetSendMessageTPS());
-//		wprintf(L"Login:%llu Sector:%llu Message Recv:%llu Send:%llu\n", InterlockedExchange(&loginPacket, 0), InterlockedExchange(&sectorPacket, 0), InterlockedExchange(&messageRecvCount, 0), InterlockedExchange(&messageSendCount, 0));
-//		wprintf(L"CPacket GetTotalBucket:%d GetUseBucket:%d  GetTotalNode:%d GetUseNode:%d\n", CPacket::GetTotalBucket(), CPacket::GetUseBucket(), CPacket::GetTotalNode(), CPacket::GetUseNode());
-//		wprintf(L"JobQ Total:%d Pool:%d use:%d\n", jobQ.GetPoolAllocSize(), jobQ.GetPoolUseSize(), jobQ.GetSize());
-//		wprintf(L"Update:%d\n\n", updateTPS);
-//
-//		
-//
-//		/*fprintf(fp, "This is a test.\n");
-//		fprintf(fp, "Current time: %d-%02d-%02d %02d:%02d:%02d\n",
-//			localTime.tm_year + 1900, localTime.tm_mon + 1, localTime.tm_mday,
-//			localTime.tm_hour, localTime.tm_min, localTime.tm_sec);
-//		fclose(fp);*/
-//		if (ptr->monitorClientPtr->chatOnFlag)
-//		{
-//			// ptr->monitorClientPtr->chatOnFlag = flag;
-//			ptr->monitorClientPtr->chatCPUUsage = processPdh.GetUserCpuInteger();
-//			ptr->monitorClientPtr->chatMemUsage = processPdh.GetPrivateMem()/1024/1024;
-//			ptr->monitorClientPtr->chatSessionCount = sessionCnt;
-//			ptr->monitorClientPtr->chatPlayerCount = playerCnt;
-//			ptr->monitorClientPtr->chatUpdateTPS = updateTPS;
-//			ptr->monitorClientPtr->chatPacketPoolUsage = packetPoolCnt;
-//			ptr->monitorClientPtr->chatJobPoolUsage = JobPoolCnt;
-//
-//			// Wake SendThread
-//			SetEvent(ptr->monitorClientPtr->GetJobEvent());
-//		}
-//		Sleep(999);
-//	}
-//
-//	/*long chatOnFlag;
-//	long chatCPUUsage;
-//	long chatMemUsage;
-//	long chatSessionCount;
-//	long chatPlayerCount;
-//	long chatUpdateTPS;
-//	long chatPacketPoolUsage;
-//	long chatJobPoolUsage;*/
-//
-//	/*int total = 0;
-//	for (int i = 0; i < 50; ++i)
-//	{
-//		for (int j = 0; j < 50; ++j)
-//		{
-//			total += secterList[i][j].size();
-//		}
-//	}
-//
-//	CProfiler s(L"Monitor");
-//	wprintf(L"TotalSession:%d user:%d account:%llu sector:%llu avg:%lf\n", server.GetSessionCount(), server.GetUser(), accountManager.size(), total, (float)total / 2500 * 9);
-//	wprintf(L"indexPool:%d characterPool:%d\n", server.GetIndexPoolUseSize(), server.GetUserPoolUseSize());
-//	wprintf(L"Accept:%d Recv:%d Send:%d\n", server.GetAcceptTPS(), server.GetRecvMessageTPS(), server.GetSendMessageTPS());
-//	wprintf(L"Login:%llu Sector:%llu Message Recv:%llu Send:%llu\n", InterlockedExchange(&loginPacket, 0), InterlockedExchange(&sectorPacket, 0), InterlockedExchange(&messageRecvCount, 0), InterlockedExchange(&messageSendCount, 0));
-//	wprintf(L"CPacket GetTotalBucket:%d GetUseBucket:%d  GetTotalNode:%d GetUseNode:%d\n", CPacket::GetTotalBucket(), CPacket::GetUseBucket(), CPacket::GetTotalNode(), CPacket::GetUseNode());
-//	wprintf(L"JobQ Total:%d Pool:%d use:%d\n", jobQ.GetPoolAllocSize(), jobQ.GetPoolUseSize(), jobQ.GetSize());
-//	wprintf(L"Update:%d\n\n", server.GetMonitoringUpdateCount());
-//	Sleep(999);*/
-//
-//	return (0);
-//}
+unsigned int CServer::MonitorThread(LPVOID param)
+{
+	CServer* ptr = reinterpret_cast<CServer*>(param);
+// -----
+
+	static DWORD firstTime;
+	DWORD lastTime;
+	DWORD sec, min, hour;
+
+	long flag, cpu, mem, sessionCnt, playerCnt, updateTPS, packetPoolCnt, JobPoolCnt;
+	int total;
+	char filename[256];
+	// start
+	firstTime = timeGetTime();
+	
+	FILE* fp;
+	time_t currentTime;
+	struct tm localTime;
+
+	
+	CProcessPDH processPdh(L"OmokGameServer");
+
+
+	for ( ; ; )
+	{
+		currentTime = time(NULL);
+		localtime_s(&localTime, &currentTime);
+		
+		sprintf_s(filename, sizeof(filename), "file_%04d-%02d-%02d_%02d.txt",
+			localTime.tm_year + 1900, localTime.tm_mon + 1, localTime.tm_mday,
+			localTime.tm_hour);
+		/*fopen_s(&fp, filename, "a+");
+		if (fp == nullptr)
+		{
+			DebugBreak();
+			return 1;
+		}*/
+		lastTime = timeGetTime();
+		total = (lastTime - firstTime) / 1000;
+		sec = total % 60;
+		total /= 60;
+		min = total % 60;
+		total /= 60;
+		hour = total % 60;
+		
+		total = 0;
+		
+		flag = 0;
+		// CPU Mem 줄 cpu, mem
+		
+
+		//flag, cpu, mem, sessionCnt, playerCnt, updateTPS, packetPoolCnt, JobPoolCnt;
+		//sessionCnt = ptr->GetUser();
+		//playerCnt = accountManager.size();// 삭제
+
+		//updateTPS = ptr->GetMonitoringUpdateCount();
+		//packetPoolCnt = CPacket::GetUseNode();
+		//JobPoolCnt = jobQ.GetSize();
+
+		
+
+		wprintf(L"================================================================================\n");
+		wprintf(L"S: Stop Or Play(Not implemented) | Q: Quit\n");
+		wprintf(L"================================================================================\n");
+		wprintf(L"Running Time:%3d h - %2d m - %2d s | server Status %d\n", hour, min, sec, flag);
+		wprintf(L"================================================================================\n");
+		wprintf(L"Session   : %d\n", ptr->GetSessionCount());
+		wprintf(L"User      : %d\n", static_cast<int>(ptr->GetUserCount()));
+		wprintf(L"In Lobby  : %d\n", ptr->GetLobbyUserCount());
+		wprintf(L"In Room   : %d\n", ptr->GetRoomUserCount());
+		wprintf(L"================================================================================\n");
+		wprintf(L"Accept TPS: %d\n", ptr->GetAndInitAcceptTPS());
+		wprintf(L"Recv   TPS: %d\n", ptr->GetAndInitRecvMessageTPS());
+		wprintf(L"Send   TPS: %d\n", ptr->GetAndInitSendMessageTPS());
+		wprintf(L"Update TPS: %d\n", 0);// 추가
+		wprintf(L"================================================================================\n");
+
+		//wprintf(L"Thread count: %d\n", processPdh.GetThreadCount());
+		wprintf(L"Packet Type\n");
+		wprintf(L"| login  : %5d | create:%5d enter : %5d | leave:%5d chat: %5d |\n", 0, ptr->GetAndInitCreateRoomPacketCount(), ptr->GetAndInitEnterRoomPacketCount(), ptr->GetAndInitLeaveRoomPacketCount(), ptr->GetAndInitChatRoomPacketCount());
+		wprintf(L"| change : %5d | ready :%5d Cancel: %5d | PlaceStone      : %5d |\n", 0,0,0,0);
+		wprintf(L"================================================================================\n");
+		wprintf(L"CPacket GetTotalBucket:%d GetUseBucket:%d  GetTotalNode:%d GetUseNode:%d\n", CPacket::GetTotalBucket(), CPacket::GetUseBucket(), CPacket::GetTotalNode(), CPacket::GetUseNode());
+		wprintf(L"JobQ Total:%d Pool:%d\n", jobQ.GetPoolAllocSize(), jobQ.GetSize());
+		wprintf(L"================================================================================\n");
+		// Thread, CPU, CPU, Memory
+		wprintf(L"Thread count: %d\n", processPdh.GetThreadCount());
+		wprintf(L"Whole CPU   : %d\n", processPdh.GetTotalCpuInteger());
+		wprintf(L"Use   CPU   : %d\n", processPdh.GetUserCpuInteger());
+		wprintf(L"NP          : %d\n", processPdh.GetNonPaged());
+		wprintf(L"Memory      : %d\n", processPdh.GetPrivateMem());
+		wprintf(L"================================================================================\n\n");
+		Sleep(999);
+	}
+
+	return (0);
+}
 
 bool CServer::OnConnectionRequest(const WCHAR* IPAddress, USHORT port)
 {
@@ -426,235 +419,369 @@ void CServer::OnError(int errorcode, const WCHAR* msg)
 	}*/
 }
 
-int CServer::LoginTest(unsigned __int64 sID, CPacket* packet)
+void CServer::MakeResponseLoginPacket(CUser* pUser, CPacket* pPacket)
 {
-	CUser* user;
+	const auto type = static_cast<WORD>(en_PACKET_CS_CHAT_RES_LOGIN);	// type: int -> (WORD)
+	BYTE status = 0;
+	// =====
 
-	INT64 accountNo;
-	BYTE nickLen;
-	CHAR nickName[20];
-	//char sessionKey[64];
-	//std::wstring nickName;
-	// -----
-
-	user = FindUser(sID);
-	if (user == nullptr)
+	if (pUser == nullptr)
 	{
 		DebugBreak();
-		packet->subRef();
-		return false;
+		return;
 	}
+	auto accountNo = pUser->GetCurrentAccountNo();				// type: (uintptr_t)
+	std::wstring nick = pUser->GetMyNickname();
+	auto nickLen = static_cast<BYTE>(nick.size());	// type: size_t -> BYTE
+	status = 1;
+
+	// Init packet
+	pPacket->Clear();
+	
+	// Set Packet
+	*pPacket << type << accountNo << nickLen;
+	pPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
+	*pPacket << status;
+}
+
+void CServer::LoginProcedure(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	BYTE recvNickLen;
+	WCHAR nickNameBuffer[20];	// 19자가 최대임.
+	// -----
+
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
 	// packet 값 빼기.
-	*packet >> accountNo;
+	*pPacket >> recvAccountNo >> recvNickLen;
+	pPacket->GetData(reinterpret_cast<char *>(nickNameBuffer), recvNickLen * 2);	// const char*면 안되는 이유 찾아.
+	nickNameBuffer[recvNickLen] = 0;
+
 
 	// 이미 접속.
-	auto it = accountKey.find(accountNo);
-	if (it != accountKey.end())
+	auto it = _accountKey.find(recvAccountNo);
+	if (it != _accountKey.end())
 	{
 		SSession* s = FindSession(it->second);
 		wprintf(L"IP:%s port:%d\n", s->clientIP, s->port);
 		wprintf(L"-----------------------------------------------------\n");
 		wprintf(L"-----------------------------------------------------\n");
 		wprintf(L"-----------------------------------------------------\n");
+		DebugBreak();
 		
 		//1 방금 접속한 사람 끊기
-		Disconnect(sID);
-		DebugBreak();
-		return false;
+		Disconnect(id);
+		return;
 	}
 
-	*packet >> nickLen;
-	packet->GetData((char*)nickName, nickLen);
-	//packet->GetData((char*)sessionKey, sizeof(sessionKey));
+	if (recvNickLen > 19)	// enum으로 빼기.
+	{
+		DebugBreak();
+		return;
+	}
 
 	// user member variable 초기화
-	user->_accountNo = accountNo;
-	//memcpy(user->id, id, sizeof(id));
-	//user->_nickName = nickName; null 필요
-	user->_nickName.assign(nickName, strlen(nickName));
+	pUser->_accountNo = recvAccountNo;
+	pUser->_nickName = nickNameBuffer;
 
-	//memcpy((char*) &(user->_nickName).c_str(), nickName, sizeof(nickName));
-	//memcpy(user->sessionKey, sessionKey, sizeof(sessionKey));
+	// 중복 체크용
+	_accountKey.insert({ recvAccountNo, id });
 
-	accountKey.insert({ accountNo, sID });
+	LobbyUp();
 
-
-	packet->Clear();
-
-	// Create sendPacket 
-	WORD type;
-	BYTE status;
-	
-	type = en_PACKET_CS_CHAT_RES_LOGIN;
-	packet->PutData((char*)&type, sizeof(type));
-	status = 1;
-	packet->PutData((char*)&accountNo, sizeof(accountNo));
-	packet->PutData((char*)&status, sizeof(status));
-
-	// type(2) | accountNo(8) status(1)
+	// | type(2) | accountNo(8) nickLen(1) nickName(20) status(1)
+	MakeResponseLoginPacket(pUser, pPacket);
 
 	// sendPacket 전송 요청
-	SendMessages(sID, packet);
-	packet->subRef();
-
-	return (true);
+	SendMessages(id, pPacket);
+	pPacket->subRef();
 }
 
-void CServer::Recv(unsigned __int64 sID, CPacket* packet)
+void CServer::Recv(unsigned __int64 id, CPacket* pPacket)
 {
 	WORD type;
-// -----
+	// =====
 
-	if (packet == nullptr)
+	// Error Check
+	if (pPacket == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
 
-	*packet >> type;
 
+	*pPacket >> type;
 	switch (type)
 	{
-	case en_LoginRequest: // Login Req
+	case en_LoginRequest:	// ***!!
 	{
-		LoginTest(sID, packet);
+		LoginProcedure(id, pPacket);
 		break;
 	}
-	case en_HeartBeatRequest: // 하트비트
+	//case en_HeartBeatRequest:
+	//{
+	//	break;
+	//}
+	//case en_RoomListRequest:	// 보류	
+	//{
+	//	break;
+	//}
+	case en_CreateRoomRequest:	// ***
 	{
-		// HeartBeat(sID, packet);
+		CreateCountUp();
+		CreateRoomProcedure(id, pPacket);
 		break;
 	}
-	case en_RoomListRequest:	// RoomList 요청
+	case en_EnterRoomRequest:	// ***
 	{
-		RoomList(sID, packet);
+		EnterCountUp();
+		EnterRoomProcedure(id, pPacket);
 		break;
 	}
-	case en_CreateRoomRequest:	// Room 생성
+	case en_LeaveRoomRequest:	// ***
 	{
-		CreateNewRoom(sID, packet);
+		LeaveCountUp();
+		LeaveRoomProcedure(id, pPacket);
 		break;
 	}
-	case en_EnterRoomRequest:
+	case en_ChatRequest:	// ***
 	{
-		EnterRoomResponse(sID, packet);
-		break;
-	}
-	case en_LeaveRoomRequest:
-	{
-		LeaveRoomResponse(sID, packet);
-		break;
-	}
-	case en_ChatRequest:
-	{
-		ChatRoom(sID, packet);
+		ChatCountUp();
+		ChattingProcedure(id, pPacket);
 		break;
 	}
 	case en_ChangePositionPlayerRequest:
-		ChangePosition(sID, packet);
+		ChangePosition(id, pPacket);
 		break;
 	case en_ChangePositionSpectatorRequest:
-		ChangePosition(sID, packet);
+		ChangePosition(id, pPacket);
 		break;
-
+	
 	case en_ReadyRequest:
 	{
-		Ready(sID, packet);
+		Ready(id, pPacket);
 		break;
 	}
 	case en_CancelReadyRequest:
 	{
-		CancelReady(sID, packet);
+		CancelReady(id, pPacket);
 		break;
 	}
+	
 	case en_PutStoneRequest:
 	{
-		PutStone(sID, packet);
+		PutStone(id, pPacket);
+		break;
+	}
+	case 59000:
+	{
+		GracefulShutdown(id, pPacket);
 		break;
 	}
 
 	default:
-		Disconnect(sID); // Attack
-		packet->subRef();
+		DebugBreak();
+		Disconnect(id); // Attack
+		pPacket->subRef();
 		break;
 	}
 }
 
-void CServer::RoomList(unsigned __int64 sID, CPacket* pRecvPacket)
+void CServer::MakeResponseGetRoomList(USHORT idx, CUser* pUser, CPacket* pPacket)
 {
-	uintptr_t accountNo;
-	USHORT index;
-	// -----
-
-	// len | type | len, name[]
-
-	*pRecvPacket >> accountNo >> index;
-
-
-	// CPacket 가공
-
-	CPacket* pResponsePacket;
-	const USHORT type = en_RoomListResponse;
-	pResponsePacket = pRecvPacket;
-
-
-
-	// len | type(2) | accountNo(8) roomCount(2), [num(2), roomLen(1) roomName(roomLen)]
-	pResponsePacket->Clear();
-	WORD roomCount = _roomManager.size();
-
-
-	int r = roomCount % 40;
-	int q = roomCount / 40;
-	if (index < q)
+	const auto packetType  = static_cast<WORD>(en_RoomListResponse);
+	if (pUser == nullptr)
 	{
-		roomCount = 40;
+		DebugBreak();
+		return;
 	}
-	else if (index == q)
+
+	pPacket->Clear();
+
+	auto accountNo = pUser->GetCurrentAccountNo();
+	BYTE count = 0;
+	*pPacket << packetType << accountNo << idx;
+
+	auto roomSize = _roomManager.size();
+	if (roomSize > 0)
 	{
-		roomCount = r;
+		int maxIdx = (roomSize - 1) / 10 + 1;
+		count = min(roomSize - 10 * (idx - 1), 10);
+		auto it = _roomManager.begin();
+		std::advance(it, count - 1);
+		for (int i = 0; i < count && it != _roomManager.end(); ++i) {
+			auto pRoom = it->second;
+			auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+			++it;
+		}
 	}
 	else
-		roomCount = 0;
-	*pResponsePacket << type << accountNo << roomCount;
-
-	int cnt = 0;
-	for (auto it = _roomManager.begin(); it != _roomManager.end(); ++it)
-	{
-		// TODO
-		if (cnt >= 40 * (index) && cnt < 40 * (index + 1))
-		{
-			CChatRoom* pRoom = it->second;
-			WORD lll = pRoom->GetCurrentRoomNumber();
-			*pResponsePacket << lll;
-			BYTE ss = pRoom->GetCurrentRoomName().size();
-			*pResponsePacket << ss;
-			pResponsePacket->PutData((char*)pRoom->GetCurrentRoomName().c_str(), ss);
-		}
-		cnt++;
-	}
-	SendMessages(sID, pResponsePacket);
-
-	pResponsePacket->subRef();
+		*pPacket << count;
 }
 
-void CServer::CreateNewRoom(unsigned __int64 sID, CPacket* pRecvPacket)
+void CServer::RoomList(unsigned __int64 id, CPacket* pRecvPacket)
 {
-	uintptr_t accountNo;
-	static USHORT roomNum = 0;
-	BYTE roomNameLength;
-	char temp[20];
+	uintptr_t recvAccountNo;
+	USHORT recvIndex;
 	// -----
 
-	// len | type | len, name[]
+	//// len | type | len, name[]
+	//*pRecvPacket >> recvAccountNo >> recvIndex;
 
-	*pRecvPacket >> accountNo >> roomNameLength;
-	pRecvPacket->GetData((char *)& temp, roomNameLength);
-	temp[roomNameLength] = 0;
 
-	std::string roomName(temp);
+	//// CPacket 가공
+	//CPacket* pResponsePacket;
+	//const USHORT type = en_RoomListResponse;
+	//pResponsePacket = pRecvPacket;
 
-	CChatRoom* pRoom = roomPool.Alloc();
-	pRoom->ChangeRoomName(roomName);
+
+	//// len | type(2) | accountNo(8) roomCount(2), [num(2)]
+	//pResponsePacket->Clear();
+	//WORD roomCount = _roomManager.size();
+
+
+	//int r = roomCount % 40;
+	//int q = roomCount / 40;
+	//if (index < q)
+	//{
+	//	roomCount = 40;
+	//}
+	//else if (index == q)
+	//{
+	//	roomCount = r;
+	//}
+	//else
+	//	roomCount = 0;
+	//*pResponsePacket << type << accountNo << roomCount;
+
+	//int cnt = 0;
+	//for (auto it = _roomManager.begin(); it != _roomManager.end(); ++it)
+	//{
+	//	// TODO
+	//	if (cnt >= 40 * (index) && cnt < 40 * (index + 1))
+	//	{
+	//		CChatRoom* pRoom = it->second;
+	//		WORD lll = pRoom->GetCurrentRoomNumber();
+	//		*pResponsePacket << lll;
+	//		BYTE ss = pRoom->GetCurrentRoomName().size();
+	//		*pResponsePacket << ss;
+	//		pResponsePacket->PutData((char*)pRoom->GetCurrentRoomName().c_str(), ss);
+	//	}
+	//	cnt++;
+	//}
+	//SendMessages(sID, pResponsePacket);
+
+	//pResponsePacket->subRef();
+}
+
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(20) status(1)
+void CServer::MakeCreateRoomPacket(CUser* pIser, CPacket* pPacket, WORD roomNo)
+{
+	const auto type = static_cast<WORD>(en_CreateRoomResponse);	// type: int -> WORD
+	// =====
+
+	if (pIser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	
+	pPacket->Clear();
+
+	auto accountNo = pIser->GetCurrentAccountNo();	// type: (uintptr_t)
+
+	// Setting Packet
+	*pPacket << type << accountNo << roomNo;
+}
+
+//CPacket* CServer::MakeCreateRoomPacket(CUser* pUser, WORD roomNo)
+//{
+//	const auto type = static_cast<WORD>(en_CreateRoomResponse);	// type(WORD)
+//
+//	if (pUser == nullptr)
+//	{
+//		DebugBreak();
+//		return nullptr;
+//	}
+//
+//	auto pCreateRoomPacket = InitPacket();			// type(CPacket *)
+//	auto accountNo = pUser->GetCurrentAccountNo();	// type(uintptr_t)
+//
+//	*pCreateRoomPacket << type << accountNo << roomNo;
+//
+//	return pCreateRoomPacket;
+//}
+
+
+CPacket* CServer::MakeEnterRoomAlarmPacket(CUser* user, CChatRoom* room)
+{
+	return nullptr;
+}
+
+void CServer::MakeResponseGracefulShutdownPacket(CUser* pUser, CPacket* pPacket)
+{
+	const auto type = static_cast<WORD>(en_GracefulShutdownResponse);	// type(WORD)
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	pPacket->Clear();
+
+	auto accountNo = pUser->GetCurrentAccountNo();	
+
+	*pPacket << type << accountNo;
+
+}
+
+void CServer::GracefulShutdown(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	// =====
+	*pPacket >> recvAccountNo;
+
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	if (pUser->_accountNo != recvAccountNo)
+		DebugBreak();
+	if (pUser->GetCurrentRoom() != 0)
+		DebugBreak();
+	if (pUser->GetCurrentState() != 0)
+		DebugBreak();
+
+	MakeResponseGracefulShutdownPacket(pUser, pPacket);
+	
+	SendResponseMessage(id, pPacket);
+	//SendMessages(id, pPacket);
+}
+
+void CServer::CreateRoomProcedure(unsigned __int64 id, CPacket* pPacket)
+{
+	DebugBreak();
+	static USHORT roomNum = 0;
+
+	uintptr_t recvAccountNo;
+	// =====
+
+	*pPacket >> recvAccountNo;
+
+	auto pRoom = _roomPool.Alloc();
+	if (pRoom == nullptr)
+	{
+		DebugBreak();
+		return ;
+	}
 
 	while (1)
 	{
@@ -662,7 +789,7 @@ void CServer::CreateNewRoom(unsigned __int64 sID, CPacket* pRecvPacket)
 		if (roomNum == 0)
 			continue;
 
-		auto roomIt = _roomManager.find(roomNum);
+		auto roomIt = _roomManager.find(roomNum);	// FindRoom 찾아보기.
 		if (roomIt == _roomManager.end())
 		{
 			break;
@@ -672,705 +799,999 @@ void CServer::CreateNewRoom(unsigned __int64 sID, CPacket* pRecvPacket)
 	pRoom->ChangeRoomNumber(roomNum);
 
 	// 검증
-	
-
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
-
-	CUser* pUser = userIt->second;
 	
-	pUser->Logging(en_CreateRoomRequest, accountNo, roomNum, pUser->_state);
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
+		DebugBreak();
 
+	// 묶고 싶은데...
 	_roomManager.insert({ roomNum , pRoom });
-	pRoom->AddUser( accountNo, pUser );
-	pUser->_inRoom = roomNum;
+	pRoom->ChangeRoomNumber(roomNum);
+	pRoom->AddUser(recvAccountNo, pUser );
+	//pUser->_inRoom = roomNum;
+	pUser->EnterRoom(roomNum);
 	pUser->ChangePositionSpectator();
-	/*auto userIt = userManager.find(sID);
 
-	pRoom->AddUser(accountNo, userIt->second);*/
-	// CPacket 가공
+	LobbyDown();
+	RoomUp();
 
-	CPacket* pResponsePacket;
-	WORD type = en_CreateRoomResponse;
-	pResponsePacket = pRecvPacket;
-	
-	BYTE flag = 1;
-	WORD roomId = roomNum;
-	
-	// len | type(2) | flag(1), len(1), room(len) = 9 + len
-	pResponsePacket->Clear();
-	*pResponsePacket << type << flag << roomId << roomNameLength;
-	pResponsePacket->PutData((char*)roomName.c_str(), roomNameLength);
+	MakeCreateRoomPacket(pUser, pPacket, roomNum);
 
-	SendMessages(sID, pResponsePacket);
-
-	pResponsePacket->subRef();
+	//auto pPacket = MakeCreateRoomPacket(pUser, roomNum);	// type(CPacket *)
+	SendResponseMessage(id, pPacket);
 }
 
-void CServer::EnterRoomResponse(unsigned __int64 sID, CPacket* pRecvPacket)
-{
-	uintptr_t accountNo;
-	WORD roomNum;
-	// -----
-	// len | type ||| flag roomid roomLen roomName
-
-	*pRecvPacket >> accountNo >> roomNum;
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
-		DebugBreak();
-	CUser* pUser = userIt->second;
-	CPacket* pResponsePacket;
-
-	pResponsePacket = pRecvPacket;
-	pResponsePacket->Clear();
-	BYTE flag = 1;
-	WORD type = en_EnterRoomResponse;
-	CChatRoom* pRoom;
-
-	pUser->Logging(en_EnterRoomRequest, accountNo, roomNum, pUser->_state);
-
-	auto roomIt = _roomManager.find(roomNum);
-	if (roomIt == _roomManager.end())	// 없어
-	{
-		flag = 0;
-		*pResponsePacket << type << accountNo << flag << roomNum;
-	}
-	else
-	{
-		WORD type = en_EnterRoomResponse;
-		pRoom = roomIt->second;
-
-
-		pRoom->AddUser(accountNo, pUser);
-		pUser->_inRoom = roomNum;
-		pUser->ChangePositionSpectator();
-		BYTE roomLen = pRoom->GetCurrentRoomName().size();
-		if (pRoom->IsGameing())
-			flag = 2;
-		*pResponsePacket << type << accountNo << flag << roomNum << roomLen;
-		pResponsePacket->PutData((char*)pRoom->GetCurrentRoomName().c_str(), roomLen);
-	}
-	SendMessages(sID, pResponsePacket);
-	pResponsePacket->subRef();
-
-	if (flag)
-	{
-		CPacket* pBroadPacket = CPacket::Alloc();
-		pBroadPacket->AddRef();
-		pBroadPacket->Clear();
-
-		WORD type = en_EnterRoomStateResponse;
-		BYTE nickLen;
-		std::string nick = userIt->second->GetMyNickname();
-		nickLen = nick.size();
-		*pBroadPacket << type << nickLen;
-		pBroadPacket->PutData((char*)nick.c_str(), nickLen);
-
-		SendRoomAll(roomNum, pBroadPacket);
-
-		/*for (auto userIt = pRoom->GetUserList().begin(); userIt != pRoom->GetUserList().end(); ++userIt)
-		{
-			SendMessages(userIt->second->_sessionId, pResponsePacket);
-		}*/
-
-		pBroadPacket->subRef();
-	}
-}
-
-//void CServer::ConnectToMonitorServer()
+//CPacket* CServer::MakeEnterRoomPacket(CUser* pUser, CChatRoom* pRoom, BYTE status)
 //{
-//	//monitorClientPtr->TryToConnectServer(L"127.0.0.1", 12345, 1, true);
+//	const auto packetType = static_cast<WORD>(en_EnterRoomResponse);
+//	if (pUser == nullptr || pRoom == nullptr)
+//	{
+//		DebugBreak();
+//		return nullptr;
+//	}
+//
+//	auto pEnterRoomPacket = InitPacket();
+//	auto accountNo = pUser->GetCurrentAccountNo();	// type(uintptr_t)
+//	auto roomNo = pRoom->GetCurrentRoomNumber();	// type(WORD)
+//
+//	if (status)
+//	{
+//		if (pRoom->IsGameing())
+//			status = 2;
+//	}
+//	*pEnterRoomPacket << packetType << accountNo << roomNo << status;
+//	return nullptr;
 //}
 
-void CServer::LeaveRoomResponse(unsigned __int64 sID, CPacket* pRecvPacket)
+void CServer::MakeResponseEnterRoomPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE status)
 {
-	uintptr_t accountNo;
-	// -----
-	// len | type ||| flag roomid roomLen roomName
+	const auto type = static_cast<WORD>(en_EnterRoomResponse);	// type: (WORD)
+	USHORT roomNo = 0;
+	// =====
 
-	*pRecvPacket >> accountNo;
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
+	//if (pUser == nullptr || pRoom == nullptr)
+	if (pUser == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
 
-	CPacket* pResponsePacket;
+	pPacket->Clear();
+
+	auto accountNo = pUser->GetCurrentAccountNo();				// type: (uintptr_t)
+	//auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());	// type: (int) -> USHORT
+	if (status)
+	{
+		roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+		if (pRoom->IsGameing())
+			status = 2;
+	}
+
+	// Setting Packet
+	*pPacket << type << accountNo << roomNo << status;
+}
+
+
+void CServer::MakeRoomMembersPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket)
+{
+	const auto type = static_cast<WORD>(en_RoomMembers);
+	// =====
+
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
 	
-	pResponsePacket = pRecvPacket;
-	pResponsePacket->Clear();
-	BYTE flag = 1;
-	WORD type = en_LeaveRoomResponse;
-	CChatRoom* pRoom;
+	pPacket->Clear();
 
-	CUser* pUser = userIt->second;
-	WORD roomId = pUser->GetCurrentRoom();
-	pUser->Logging(en_LeaveRoomRequest, accountNo, roomId, pUser->_state);
-	auto roomIt = _roomManager.find(roomId);
-	if (roomIt == _roomManager.end())	// 없어
+	auto accountNo = pUser->GetCurrentAccountNo();
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	auto numOfPeople = static_cast<BYTE>(pRoom->GetUserCount());
+	// Setting Packet
+	*pPacket << type << accountNo << roomNo << numOfPeople;
+
+	for (auto userIt : pRoom->GetUserList())
 	{
-		DebugBreak();
-	}
-	else
-	{
-		WORD type = en_LeaveRoomResponse;
-		pRoom = roomIt->second;
-
-		
-		pRoom->CancelPlayer(pUser->_state, accountNo, sID);
-		pUser->ReadyClear();
-
-		pUser->RemovePosition();
-		pRoom->EraseUser(accountNo);
-		//pRoom->AddUser(accountNo, userIt->second);
-		BYTE roomLen = pRoom->GetCurrentRoomName().size();
-
-		pUser->LeaveRoom();
-		/*userIt->second->_inRoom = 0;*/
-		
-
-
-		*pResponsePacket << type << accountNo << flag << roomId << roomLen;
-		pResponsePacket->PutData((char *)pRoom->GetCurrentRoomName().c_str(), roomLen);
-		
-		if (pRoom->GetUserCount() == 0)
+		auto pRoomUser = userIt.second;
+		if (pUser != pRoomUser)	// 나 자신 빼야함.
 		{
-			_roomManager.erase(roomId);
-			roomPool.Free(pRoom);
+			std::wstring nick = pRoomUser->GetMyNickname();
+			auto nickLen = static_cast<BYTE>(nick.size());	// type: size_t -> BYTE
+			*pPacket << nickLen;
+			pPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
 		}
-	}
-	SendMessages(sID, pResponsePacket);
-	pResponsePacket->subRef();
-
-	if (flag)
-	{
-		CPacket* pBroadPacket = CPacket::Alloc();
-		pBroadPacket->AddRef();
-		pBroadPacket->Clear();
-
-		WORD type = en_LeaveRoomStateResponse;
-		BYTE nickLen;
-		std::string nick = pUser->GetMyNickname();
-		nickLen = nick.size();
-		*pBroadPacket << type << nickLen;
-		pBroadPacket->PutData((char*)nick.c_str(), nickLen);
-
-		SendRoomAll(roomId, pBroadPacket);
-
-
-		pBroadPacket->subRef();
 	}
 }
 
-void CServer::ChatRoom(unsigned __int64 sID, CPacket* pPacket)
+// pUser 사용 안함.
+void CServer::MakeEnterPlayerAlarmPacket(CChatRoom* pRoom, CPacket* pPacket)
 {
-	uintptr_t accountNo;
-	BYTE charLen;
-	WORD roomId;
-	char chat[128];
-	// -----
-	// len | type ||| flag roomid roomLen roomName
+	// 수정
+	const auto type = static_cast<WORD>(305);
 
-	*pPacket >> accountNo >> roomId >>charLen;
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
-		DebugBreak();
-
-	CUser* pUser = userIt->second;
-	if (accountNo != pUser->GetCurrentAccountNo())
-		DebugBreak();
-
-	pPacket->GetData(chat, charLen);
-	chat[charLen] = 0;
-	std::string chatString(chat);
-
-	pPacket->Clear();
-	BYTE flag = 1;
-	WORD type = en_ChatResponse;
-	CChatRoom* pRoom;
-
-	if (roomId != pUser->GetCurrentRoom())
-		DebugBreak();
-
-	auto roomIt = _roomManager.find(roomId);
-	if (roomIt == _roomManager.end())	// 없어
+	if (pRoom == nullptr)
 	{
-		flag = 0;
+		DebugBreak();
+		return;
 	}
-	else
-	{
-		pRoom = roomIt->second;
-		BYTE roomLen = pRoom->GetCurrentRoomName().size();
+	auto p1 = pRoom->FindUser(pRoom->GetPlayer1AccountNo());
+	auto p2 = pRoom->FindUser(pRoom->GetPlayer2AccountNo());
+	BYTE cnt = pRoom->GetPlayerCount();
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	BYTE nickLen = 0;
+	pPacket->Clear();
 
+	*pPacket << type << roomNo << cnt;
+	if (p1)
+	{
+		std::wstring nick = p1->GetMyNickname();
+		nickLen = nick.size();
+		*pPacket << (BYTE)1 << p1->GetCurrentReadyFlag() << nickLen;
+		pPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
+	}
+	if (p2)
+	{
+		std::wstring nick = p2->GetMyNickname();
+		nickLen = nick.size();
+		*pPacket << (BYTE)2 << p2->GetCurrentReadyFlag() << nickLen;
+		pPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
 	}
 	
-	pUser->Logging(en_CancelReadyRequest, accountNo, roomId, pUser->_state);
-
-	if (flag)
-	{
-		CPacket* pBroadPacket = CPacket::Alloc();
-		pBroadPacket->AddRef();
-		pBroadPacket->Clear();
-
-		BYTE nickLen;
-		std::string nick = pUser->GetMyNickname();
-		nickLen = nick.size();
-		*pBroadPacket << type << accountNo << roomId << nickLen;
-		pBroadPacket->PutData((char*)nick.c_str(), nickLen);
-
-		BYTE chatLen = chatString.size();
-		*pBroadPacket << chatLen;
-		pBroadPacket->PutData((char*)chatString.c_str(), chatLen);
-
-		SendRoomAll(roomId, pBroadPacket);
 
 
-		pBroadPacket->subRef();
-	}
-	else
+}
+
+// | type(2) | roomNo(2) nickLen(1) nickName(max 20)
+void CServer::MakeEnterAlarmPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket)	// 303
+{
+	const auto type = static_cast<WORD>(en_EnterRoomStateResponse);
+	// =====
+
+	if (pUser == nullptr || pRoom == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
+
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	BYTE nickLen = 0;
+	std::wstring nick = pUser->GetMyNickname();
+	nickLen = nick.size();
+
+	pPacket->Clear();
+
+	*pPacket << type << roomNo << nickLen;
+	pPacket->PutData(reinterpret_cast<const char *>(nick.c_str()), nickLen * 2);
+}
+
+// | type(2) | accountNo(8) roomNo(2) numOfPeople(2) | [nickLen(1) nickName(max 20)]
+void CServer::MakeGetUserListPacket(CUser* user, CChatRoom* room, CPacket* packet)	// 304
+{
+	//if (user == nullptr || room == nullptr)
+	//{
+	//	DebugBreak();
+
+	//	return;
+	//}
+
+	//WORD type = 304;
+	//INT64 accountNo = user->GetCurrentAccountNo();
+	//WORD roomNo = room->GetCurrentRoomNumber();
+	//WORD numOfPeople;
+	//BYTE nickLen;
+
+	//packet->Clear();
+	//numOfPeople = room->GetUserCount();
+	//*packet << type << accountNo << roomNo << numOfPeople;
+
+
+	//for (auto v : room->GetUserList())
+	//{
+	//	CUser* pUser = v.second;
+	//	
+	//	std::string nick = pUser->GetMyNickname();
+	//	nickLen = nick.size();
+	//	*packet << nickLen;
+	//	packet->PutData((char*)nick.c_str(), nickLen);
+	//}
+}
+
+// | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(max 20) status(1)
+void CServer::MakeResponseLeaveRoomPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE status)
+{
+	const auto type = static_cast<WORD>(en_LeaveRoomResponse);	// type: (WORD)
+	// =====
+
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	pPacket->Clear();
+
+	auto accountNo = pUser->GetCurrentAccountNo();				// type: (uintptr_t)
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());	// type: (int) -> USHORT
+
+	if (pRoom->IsGameing())
+		status = 0;
+
+	// Setting Packet
+	*pPacket << type << accountNo << roomNo << status;
+}
+// | type(2) | roomNo(2) nickLen(1) nickName(max 20)
+void CServer::MakeLeaveAlarmPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket)	// 403
+{
+	const auto packetType = static_cast<WORD>(en_EnterRoomStateResponse);
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	pPacket->Clear();
+
+
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	const std::wstring nickName = pUser->GetMyNickname();
+	auto nickLen = static_cast<BYTE>(nickName.size());
+	
+	*pPacket << packetType << roomNo << nickLen;
+	pPacket->PutData(reinterpret_cast<const char*>(nickName.c_str()), nickLen * 2);
+}
+
+// | type(2) | accountNo(8) roomNo(2) nickLen(1) nickName(max 20) chatLen(1) chatName(max 255)
+void CServer::MakeChatPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, const std::wstring& chat)
+{
+	const auto type = static_cast<WORD>(en_ChatResponse);
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	pPacket->Clear();
+
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	std::wstring nick = pUser->GetMyNickname();
+	auto nickLen = static_cast<BYTE>(nick.size());
+	auto accountNo = pUser->GetCurrentAccountNo();
+	auto chatLen = static_cast<BYTE>(chat.size());
+
+	// Set Packet
+	*pPacket << type << accountNo << roomNo << nickLen;
+	pPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
+	*pPacket << chatLen;
+	pPacket->PutData(reinterpret_cast<const char*>(chat.c_str()), chatLen * 2);
+}
+
+
+
+void CServer::SendResponseMessage(uintptr_t id, CPacket* pPacket)
+{
+	SendMessages(id, pPacket);
 	pPacket->subRef();
 }
 
-void CServer::ChangePosition(unsigned __int64 sID, CPacket* pPacket)
+
+void CServer::EnterSuccess(uintptr_t id, CUser* pUser, CChatRoom* pRoom)
+{
+	auto pUserListPacket = InitPacket();
+
+	// | type(2) | accountNo(8) roomNo(2) numOfPeople(2) | [nickLen(1) nickName(max 20)]
+	//MakeGetUserListPacket(pUser, pRoom, pUserListPacket);
+	//MakeGetUserListPacket(pUser, pRoom);
+
+	MakeRoomMembersPacket(pUser, pRoom, pUserListPacket);
+	SendResponseMessage(id, pUserListPacket);
+	
+	pRoom->AddUser(pUser->GetCurrentAccountNo(), pUser);
+
+	auto pAlarmPacket = InitPacket();
+
+	// | type(2) | roomNo(2) nickLen(1) nickName(max 20)
+	MakeEnterAlarmPacket(pUser, pRoom, pAlarmPacket);
+
+	// SendRoomAll(roomNo, pAlarmPacket);
+	SendRoomAll(pUser->GetCurrentRoom(), pAlarmPacket, pUser->_accountNo);
+
+	pAlarmPacket->subRef();
+
+	if (pRoom->GetPlayerCount() > 0)
+	{
+		auto pPlayerAlarmPacket = InitPacket();
+		MakeEnterPlayerAlarmPacket(pRoom, pPlayerAlarmPacket);
+		//MakeUserAlarm(pUser, pRoom, pPlayerAlarmPacket);
+		SendResponseMessage(id, pPlayerAlarmPacket);
+	}
+}
+
+
+void CServer::EnterRoomProcedure(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	WORD recvRoomNo;
+	// =====
+
+	*pPacket >> recvAccountNo >> recvRoomNo;
+
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	auto status = static_cast<BYTE>(1);
+	auto pRoom = FindRoomTmp(recvRoomNo);
+	if (pRoom == nullptr)
+	{
+		status = 0;
+	}
+	else
+	{
+		if (recvRoomNo != pRoom->GetCurrentRoomNumber())
+			DebugBreak();
+		if (pUser->GetCurrentRoom())
+			status = 0;
+		if (pRoom->GetUserCount() >= 20)
+			status = 0;
+		if (status)
+		{
+			pUser->EnterRoom(recvRoomNo);
+			pUser->ChangePositionSpectator();
+		}
+	}
+
+	//auto pEnterRoomPacket = MakeEnterRoomPacket(pUser, pRoom, status);
+	MakeResponseEnterRoomPacket(pUser, pRoom, pPacket, status);
+	SendResponseMessage(id, pPacket);
+
+
+	if (status)
+	{
+		LobbyDown();
+		RoomUp();
+		EnterSuccess(id, pUser, pRoom);
+	}
+}
+
+
+void CServer::LeaveSuccess(uintptr_t id, CUser* pUser, CChatRoom* pRoom)
+{
+	const auto packetType = static_cast<WORD>(en_LeaveRoomStateResponse);
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	auto pBroadPacket = InitPacket();
+	std::wstring nick = pUser->GetMyNickname();
+	auto nickLen = static_cast<BYTE>(nick.size());
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	*pBroadPacket << packetType << roomNo << nickLen;
+	pBroadPacket->PutData(reinterpret_cast<const char*>(nick.c_str()), nickLen * 2);
+
+	SendRoomAll(roomNo, pBroadPacket, pUser->GetCurrentAccountNo());
+
+	pBroadPacket->subRef();
+}
+
+void CServer::LeaveRoomProcedure(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	USHORT recvRoomNo;
+	// =====
+
+	*pPacket >> recvAccountNo >> recvRoomNo;
+	
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
+	{
+		DebugBreak();
+		return;
+	}
+
+	auto pRoom = FindRoom(recvRoomNo);
+	if (pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	if (recvRoomNo != pRoom->GetCurrentRoomNumber())
+		DebugBreak();
+	BYTE status = 1;
+	if (pUser->GetCurrentRoom() == 0)
+		status = 0;
+		
+	pRoom->CancelPlayer(pUser->GetCurrentState(), recvAccountNo, id);
+	pUser->ReadyClear();
+
+	pUser->RemovePosition();
+	pRoom->EraseUser(recvAccountNo);
+
+	pUser->LeaveRoom();
+	
+
+	MakeResponseLeaveRoomPacket(pUser, pRoom, pPacket, status);
+
+	if (pRoom->GetUserCount() == 0)
+	{
+		//_roomManager.erase(recvRoomNo);
+		//_roomPool.Free(pRoom);
+	}
+	
+	SendResponseMessage(id, pPacket);
+
+	if (status)
+	{
+		LobbyUp();
+		RoomDown();
+		LeaveSuccess(id, pUser, pRoom);
+	}
+}
+
+
+void CServer::ChattingProcedure(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	BYTE recvCharLen;
+	WORD recvRoomNo;
+	WCHAR buf[128];
+	CChatRoom* pRoom = nullptr;
+	// -----
+	// len | type ||| flag roomid roomLen roomName
+
+	// | type(2) | accountNo(8) roomNo(2) chatLen(1) chatting(max 127)
+	*pPacket >> recvAccountNo >> recvRoomNo >> recvCharLen;
+	pPacket->GetData(reinterpret_cast<char *>(&buf), recvCharLen * 2);
+	buf[recvCharLen] = 0;
+	std::wstring chatting(buf);
+
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
+	{
+		DebugBreak();
+		return;
+	}
+
+	if (recvRoomNo != pUser->GetCurrentRoom())
+	{
+		DebugBreak();
+		return;
+	}
+
+
+	pRoom = FindRoom(recvRoomNo);
+	if (pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	MakeChatPacket(pUser, pRoom, pPacket, chatting);
+	
+	SendRoomAll(recvRoomNo, pPacket);
+
+	pPacket->subRef();
+}
+
+void CServer::MakeResponseChangePositionPacket(CUser *pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE from, BYTE to, BYTE status)
+{
+	const auto type = static_cast<WORD>(en_ChangePositionPlayerResponse);
+	// =====
+
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	pPacket->Clear();
+
+	auto accountNo = pUser->GetCurrentAccountNo();
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	auto numOfPeople = static_cast<BYTE>(pRoom->GetUserCount());
+
+	*pPacket << type << pUser->_accountNo << roomNo << from << to;
+		
+	const std::wstring nick = pUser->GetMyNickname();
+	BYTE nickLen = nick.size();
+		
+
+	*pPacket << nickLen;
+	pPacket->PutData((char*)nick.c_str(), nickLen*2);
+
+	*pPacket << status;
+}
+
+void CServer::ChangeSuccess(uintptr_t id, CUser* pUser, CChatRoom* pRoom, BYTE to)
+{
+	pUser->ReadyClear();
+	pRoom->CancelPlayer(pUser->GetCurrentState(), pUser->GetCurrentAccountNo(), id);
+
+	switch (to)
+	{
+	case 1:
+		pUser->ChangePositionPlayer1();
+		pRoom->pCountUp();
+		break;
+	case 2:
+		pUser->ChangePositionPlayer2();
+		pRoom->pCountUp();
+		break;
+	case 3:
+		pUser->ChangePositionSpectator();
+		pRoom->pCountDown();
+		break;
+	default:
+		DebugBreak();
+		break;
+	}
+	if (to != 3)
+		pRoom->ReadyPlayer(to, pUser->GetCurrentAccountNo(), id);// Ready가 아닌 Setting임.
+}
+
+// procedure
+void CServer::ChangePosition(unsigned __int64 id, CPacket* pPacket)
 {
 	// len(5) | type(2) roomNo(2) from(1) to(1) nicoLen(1) nickName(nickLen max 19)
-	uintptr_t accountNo;
-	USHORT roomNo;
+	uintptr_t recvAccountNo;
+	USHORT recvRoomNo;
 	BYTE from, to;
 	BYTE nickLen;
-
+	WCHAR nick[20];
 	//BYTE position;
 	// -----
 	
 	// len = sizeof(type) + sizeof(accountNo) + sizeof(roomNo) + sizeof(from) + sizeof(to) + sizeof(nickLen) + nickLen;
 
-	*pPacket >> accountNo;
-	auto userIt = userManager.find(sID);
+	auto userIt = userManager.find(id);
 	if (userIt == userManager.end())
 	{
 		DebugBreak();
 	}
+	*pPacket >> recvAccountNo >> recvRoomNo >> from >> to;
 	
-	CUser* pUser = userIt->second;
-	if (accountNo != pUser->GetCurrentAccountNo())
+	auto pUser = userIt->second;
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
+		DebugBreak();
+	if (recvRoomNo != pUser->GetCurrentRoom())
 		DebugBreak();
 
-
-	*pPacket >> roomNo;
-	if (roomNo != pUser->_inRoom)
-		DebugBreak();
-	auto roomIt = _roomManager.find(roomNo);
-	if (roomIt == _roomManager.end())	// 없어
+	auto pRoom = FindRoom(recvRoomNo);
+	if (pRoom == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
 	
-	pUser->Logging(en_Position, accountNo, roomNo, pUser->_state);
-	CChatRoom* pRoom = roomIt->second;
-
-	int a = 0;
 	BYTE flag = true;
 	// 가능할 수도... 
 	if (pRoom->IsGameing())
 	{
 		flag = false;
-		a = 1;
-		// DebugBreak();	// 가능할 수 있음.
+		DebugBreak();	// 가능할 수 있음.
 	}
 	
-	char buf[20];
-	*pPacket >> from >> to;
-	// TODO: 확인 필요할 듯
-	if (pUser->GetCurrentState() == to)
+	if (pUser->GetCurrentState() == to || pUser->GetCurrentState() != from)
 	{
 		DebugBreak();
 	}
-	
+
 	if (to != 3)
 	{
-		// 추가할 것. 1이나 2에 사람이 있으면 안됨.
 		if (!pRoom->IsPossibleChangePositionPlayer(to))
 		{
 			flag = false;
-			a = 2;
-		}
-		*pPacket >> nickLen;
-		pPacket->GetData(buf, nickLen);
-		buf[nickLen] = 0;
-		std::string nickName(buf);
-	}
-	
-
-
-	if (flag)
-	{
-		switch (to)
-		{
-		case 1:
-			pUser->ChangePositionPlayer1();
-
-			break;
-		case 2:
-			pUser->ChangePositionPlayer2();
-			break;
-		case 3:
-			pUser->ChangePositionSpectator();
-			break;
-		default:
-			DebugBreak();
-			break;
 		}
 	}
 	
+	*pPacket >> nickLen;
+	pPacket->GetData(reinterpret_cast<char*>(&nick), nickLen * 2);
+	nick[nickLen] = 0;
+
+
+	// ======================================================
 	// client에 보낼 packet 초기화
-	pPacket->Clear();
+
+	MakeResponseChangePositionPacket(pUser, pRoom, pPacket, from, to, flag);
 	
-	WORD type;
-
-
 	// 통과
-	if (to == 3)
+	if (to >= 1 && to <= 3)
 	{
-		type = en_ChangePositionSpectatorResponse;
-		*pPacket << type << pUser->_accountNo << roomNo << flag << from << to;
 		if (flag)
 		{
-			pRoom->CancelPlayer(from, accountNo, sID);
-			pUser->ReadyClear();
-			//pRoom->Player1Clear();
+			if (from == 1 || from == 2)
+			{
+				pRoom->pCountDown();
+			}
 
-			SendRoomAll(roomNo, pPacket);
+			ChangeSuccess(id, pUser, pRoom, to);
+			SendRoomAll(recvRoomNo, pPacket);
 		}
 		else
 		{
-			SendMessages(sID, pPacket);
+			SendMessages(id, pPacket);
 		}
 	}
-	else if (to == 1 || to == 2)
-	{
-		type = en_ChangePositionPlayerResponse;
-		*pPacket << type << pUser->_accountNo << roomNo << flag << from << to;
-		
-		if (flag)
-		{
-			pRoom->CancelPlayer(from, accountNo, sID);
-			pRoom->ReadyPlayer(to, accountNo, sID);
-			pUser->ReadyClear();
-
-
-			std::string nick = pUser->GetMyNickname();
-			nickLen = nick.size();
-			*pPacket << nickLen;
-			pPacket->PutData((char*)nick.c_str(), nickLen);
-			SendRoomAll(roomNo, pPacket);
-		}
-		else
-		{
-			SendMessages(sID, pPacket);
-		}
-	}
-
 	pPacket->subRef();
 }
 
-void CServer::Ready(unsigned __int64 sID, CPacket* pPacket)
+void CServer::MakeResponseReadyPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket)
 {
-	uintptr_t accountNo;
-	WORD roomNo;
-	BYTE position;
-	// -----
-	// 
-	// input: type(2) accountNo(8) << roomNo(2) << position(1) << x(1) << y(1);
-	// 
-	// len | type ||| flag roomid roomLen roomName
-
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
-		DebugBreak();
-	
-	*pPacket >> accountNo;
-
-	CUser* pUser = userIt->second;
-	if (pUser->_accountNo != accountNo)
-		DebugBreak();
-
-	*pPacket >> roomNo;
-	WORD roomId = pUser->GetCurrentRoom();
-	if (roomNo != roomId)
-		DebugBreak();
-
-
-	auto roomIt = _roomManager.find(roomId);
-	if (roomIt == _roomManager.end())	// 없어
-		DebugBreak();
-	CChatRoom* pRoom = roomIt->second;
-
-	*pPacket >> position;
-	pUser->Logging(en_ReadyRequest, accountNo, roomId, position);
-	BYTE curPosition = pUser->GetCurrentState();
-	if (position != curPosition)
-		DebugBreak();
-
-	if (curPosition != 1 && curPosition != 2)	// 1 2만 가능
+	const auto type = static_cast<WORD>(en_ReadyResponse);
+	if (pUser == nullptr || pRoom == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
+	pPacket->Clear();
+	
+	BYTE nickLen;
+	std::wstring nick = pUser->GetMyNickname();
+	nickLen = nick.size();
+	BYTE flag = true;
+	BYTE position = pUser->GetCurrentState();
+	*pPacket << type << pUser->GetCurrentAccountNo() << pRoom->GetCurrentRoomNumber() << position << flag;
+}
+
+
+// RoomNO만
+void CServer::MakeGameStartPacket(CUser* pUser, CChatRoom* pRoom,CPacket* pPacket)
+{
+	const auto packetType = static_cast<WORD>(en_StartResponse);
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	
+	pPacket->Clear();
+	*pPacket << packetType << pRoom->GetCurrentRoomNumber();
+}
+
+void CServer::GameStartProcedure(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket)
+{
+	if (pUser->GetCurrentState() == 1)
+	{
+		uintptr_t oppAccountNo = pRoom->GetPlayer2AccountNo();
+		auto oppUser = pRoom->FindUser(oppAccountNo);
+		if (oppUser && oppUser->GetCurrentReadyFlag())
+		{
+			pRoom->InitGameSetting();
+
+			CPacket* pStartPacket = CPacket::Alloc();
+			pStartPacket->AddRef();
+			MakeGameStartPacket(pUser, pRoom, pStartPacket);
+			SendRoomAll(pRoom->GetCurrentRoomNumber(), pStartPacket);
+			pStartPacket->subRef();
+		}
+	}
+	else
+	{
+		uintptr_t oppAccountNo = pRoom->GetPlayer1AccountNo();
+		auto oppUser = pRoom->FindUser(oppAccountNo);
+		if (oppUser && oppUser->GetCurrentReadyFlag())
+		{
+			pRoom->InitGameSetting();
+
+			CPacket* pStartPacket = CPacket::Alloc();
+			pStartPacket->AddRef();
+			MakeGameStartPacket(pUser, pRoom, pStartPacket);
+			SendRoomAll(pRoom->GetCurrentRoomNumber(), pStartPacket);
+			pStartPacket->subRef();
+		}
+	}
+}
+// user 1,2 
+void CServer::MakeGameOverPacket(CUser* pUser, CUser* pOppUser, CChatRoom* pRoom, CPacket* pPacket, int flag)
+{
+	const auto type = static_cast<WORD>(en_GameOverResponse);
+	// =====
+
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	pPacket->Clear();
+
+	BYTE _f = flag;
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	*pPacket << type << roomNo << _f;
+	std::wstring nick = pUser->GetMyNickname();
+	BYTE nickLen = nick.size();
+	*pPacket << nickLen;
+	pPacket->PutData((char*)nick.c_str(), nickLen * 2);
+
+	nick = pOppUser->GetMyNickname();
+	nickLen = nick.size();
+	*pPacket << nickLen;
+	pPacket->PutData((char*)nick.c_str(), nickLen * 2);
+}
+
+void CServer::MakeRecordPacket(CChatRoom* pRoom, CPacket* pPacket)
+{
+	const auto type = static_cast<WORD>(en_GameOverRecordResponse);
+	COmokBoard &board = pRoom->GetBoard();
+
+	pPacket->Clear();
+	auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
+	//board.
+	BYTE recordCnt = board.GetStoneCount();
+	*pPacket << roomNo << recordCnt;
+	for (int i = 0; i < recordCnt; ++i)
+	{
+		BoardPos pos = board.GetPos(i);
+		BYTE x, y;
+		x = pos._x;
+		y = pos._y;
+		*pPacket << x << y;
+	}
+	// room / size [x, y] BYTE
+}
+
+
+void CServer::Ready(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	WORD recvRoomNo;
+	BYTE recvPosition;
+	// =====
+	// len | type ||| flag roomid roomLen roomName status
+
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	*pPacket >> recvAccountNo >> recvRoomNo >> recvPosition;
+	if (pUser->_accountNo != recvAccountNo)
+		DebugBreak();
+
+	auto roomNo = pUser->GetCurrentRoom();
+	if (recvRoomNo != roomNo)
+		DebugBreak();
+
+	auto pRoom = FindRoom(recvRoomNo);
+	if (pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	BYTE curPosition = pUser->GetCurrentState();
+	if ((recvPosition != curPosition) && curPosition > 2)
+		DebugBreak();
 
 	if (pRoom->IsGameing())
 	{
 		DebugBreak();
 	}
+	//pRoom->ReadyPlayer()
+	//pRoom->CancelPlayer(recvPosition, pUser->GetCurrentAccountNo(), id);
+	pUser->Ready();
 
-
-	
-	// 전송 패킷 만들기.
-	pPacket->Clear();
-
-	WORD type = en_ReadyResponse;
-
-
-	/*CPacket* pBroadPacket = CPacket::Alloc();
-	pBroadPacket->AddRef();
-	pBroadPacket->Clear();*/
-
-	BYTE nickLen;
-	std::string nick = pUser->GetMyNickname();
-	nickLen = nick.size();
-	BYTE flag = true;
-	
-	if (position == 1 || position == 2)
-	{
-		/*pRoom->ReadyPlayer(position, pUser->GetCurrentAccountNo(), sID);*/
-		pUser->Ready();
-
-		*pPacket << type << accountNo << roomId << position << flag;
-		SendMessages(sID, pPacket);
-		//SendRoomAll(roomId, pPacket);
-		
-
-		if (position == 1)
-		{
-			uintptr_t oppSessionId = pRoom->GetPlayer2SessionId();
-			auto oppUserIt = userManager.find(oppSessionId);
-			if (oppUserIt == userManager.end())
-			{
-				;
-			}
-			else
-			{
-				CUser* pOppUser = oppUserIt->second;
-				if (pRoom->GetPlayer2AccountNo() != pOppUser->GetCurrentAccountNo())
-					DebugBreak();
-
-				BYTE oppReadyFlag = pOppUser->GetCurrentReadyFlag();
-				if (oppReadyFlag)
-				{
-
-					pRoom->GameStart();
-					pRoom->InitTurn();
-					pRoom->NextTurn();
-					pRoom->BoardClear();
-
-					CPacket* pStartPacket = CPacket::Alloc();
-					pStartPacket->AddRef();
-					pStartPacket->Clear();
-					WORD type = en_StartResponse;
-					BYTE nextPosition = 1;
-					*pStartPacket << type << accountNo << roomId << flag << nextPosition;
-
-					SendRoomAll(roomId, pStartPacket);
-
-					pStartPacket->subRef();
-				}
-			}
-
-		}
-		else
-		{
-			uintptr_t oppSessionId = pRoom->GetPlayer1SessionId();
-			auto oppUserIt = userManager.find(oppSessionId);
-			if (oppUserIt == userManager.end())
-			{
-				;
-			}
-			else
-			{
-				CUser* pOppUser = oppUserIt->second;
-				if (pRoom->GetPlayer1AccountNo() != pOppUser->GetCurrentAccountNo())
-					DebugBreak();
-
-
-				BYTE oppReadyFlag = pOppUser->GetCurrentReadyFlag();
-				if (oppReadyFlag)
-				{
-					pRoom->GameStart();
-					pRoom->InitTurn();
-					pRoom->NextTurn();
-					pRoom->BoardClear();
-
-					CPacket* pStartPacket = CPacket::Alloc();
-					pStartPacket->AddRef();
-					pStartPacket->Clear();
-					WORD type = en_StartResponse;
-					BYTE nextPosition = 1;
-					*pStartPacket << type << accountNo << roomId << flag << nextPosition;
-					SendRoomAll(roomId, pStartPacket);
-
-					pStartPacket->subRef();
-				}
-			}
-		}
-		
-		
-	}
-	else
-	{
-		DebugBreak();
-	}
+	MakeResponseReadyPacket(pUser, pRoom, pPacket);
+	SendRoomAll(roomNo, pPacket);
 	pPacket->subRef();
-	
+
+	// Game 시작 부분 (내부에서 pPacket 안씀)
+	GameStartProcedure(pUser, pRoom, pPacket);
 }
 
-void CServer::CancelReady(unsigned __int64 sID, CPacket* pPacket)
+void CServer::MakeResponseCancelPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE status)
 {
-	uintptr_t accountNo;
-	WORD roomNo;
-	BYTE position;
-	// -----
-	// len | type ||| flag roomid roomLen roomName
-
-	
-
-	*pPacket >> accountNo >> roomNo >> position;
-	auto userIt = userManager.find(sID);
-	if (userIt == userManager.end())
-		DebugBreak();
-	
-
-	CUser* pUser = userIt->second;
-	if (accountNo != pUser->GetCurrentAccountNo())
-		DebugBreak();
-
-
-	WORD roomId = pUser->GetCurrentRoom();
-	if (roomNo != roomId)
-		DebugBreak();
-	pUser->Logging(en_CancelReadyRequest, accountNo, roomId, position);
-
-	auto roomIt = _roomManager.find(roomId);
-	if (roomIt == _roomManager.end())	// 없어
+	const auto packetType = static_cast<WORD>(en_CancelReadyResponse);
+	if (pUser == nullptr || pRoom == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
-
-	CChatRoom* pRoom = roomIt->second;
-
-	if (!(position == 1 || position == 2))
-		DebugBreak();
-
-
-
+	
 	pPacket->Clear();
 	
-	// 통과
-	WORD type = en_CancelReadyResponse;
 	BYTE nickLen;
-	std::string nick = pUser->GetMyNickname();
+	std::wstring nick = pUser->GetMyNickname();
 	nickLen = nick.size();
-	BYTE flag = true;
 
-	// 애매해질수도 시작했는데 줄수 있잖아
+	BYTE  position = pUser->GetCurrentState();
+	*pPacket << packetType << pUser->GetCurrentAccountNo() << pRoom->GetCurrentRoomNumber() << position << status;
+}
+
+void CServer::CancelReady(unsigned __int64 id, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	WORD recvRoomNo;
+	BYTE recvPosition;
+
+	*pPacket >> recvAccountNo >> recvRoomNo >> recvPosition;
+	
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
+		DebugBreak();
+
+	auto roomNo = pUser->GetCurrentRoom();
+	if (recvRoomNo != roomNo)
+		DebugBreak();
+
+	auto pRoom = FindRoom(roomNo);
+	if (pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+
+	if (!(recvPosition == 1 || recvPosition == 2))
+		DebugBreak();
+
+	bool flag = true;
 	if (pRoom->IsGameing())
 	{
 		flag = false;
 	}
 	
-	if (position == 1 || position == 2)
+	MakeResponseCancelPacket(pUser, pRoom, pPacket, flag);
+
+	if (flag)
 	{
-		//pRoom->CancelPlayer(position, pUser->GetCurrentAccountNo(), sID);
 		pUser->CancelReady();
-
-		*pPacket << type << accountNo << roomId << position;
-		*pPacket << flag;
-		SendMessages(sID, pPacket);
-		
-
+		// pRoom->CancelPlayer(recvPosition, pUser->GetCurrentAccountNo(), id); 자리 옮길때.
+		SendRoomAll(pRoom->GetCurrentRoomNumber(), pPacket);
 	}
 	else
 	{
-		DebugBreak();
+		SendMessages(id, pPacket);
 	}
-
 	pPacket->subRef();
-
 }
 
-//void CServer::ConnectToMonitorServer()
-//{
-//	//monitorClientPtr->TryToConnectServer(L"127.0.0.1", 12345, 1, true);
-//}
+void CServer::SendRoomAll(USHORT roomNum, CPacket* packet)
+{
+	auto roomIt = _roomManager.find(roomNum);
+	if (roomIt == _roomManager.end())
+		return;
+	
+	auto pRoom = roomIt->second;
+	auto userList = pRoom->GetUserList();
+	for (auto it = userList.begin() ; it != userList.end() ; ++it)
+	{
+		auto *pUser = it->second;
+		SendMessages(pUser->_sessionId, packet);
+	}
+}
 
-
-void CServer::SendRoomAll(int roomNum, CPacket* packet)
+void CServer::SendRoomAll(USHORT roomNum, CPacket* pPacket, UINT64 accountNo)
 {
 	// 주위 Sector 돌면서 SendMessage
 	auto roomIt = _roomManager.find(roomNum);
 	if (roomIt == _roomManager.end())
 		return;
-	
-	CChatRoom* pRoom = roomIt->second;
-	auto userList = pRoom->GetUserList();
-	
-	for (auto it = userList.begin() ; it != userList.end() ; ++it)
+
+	auto pRoom = roomIt->second;	// type: (CChatRoom *)
+	auto userList = pRoom->GetUserList();	// type: (unordered_map<unsigned long long, CUser*>)
+
+	for (auto it = userList.begin(); it != userList.end(); ++it)
 	{
-		CUser *pUser = it->second;
-		SendMessages(pUser->_sessionId, packet);
+		auto pUser = it->second;
+		if (pUser->GetCurrentAccountNo() != accountNo)
+			SendMessages(pUser->_sessionId, pPacket);
 	}
+	//pPacket->subRef();
+}
+
+void CServer::SendResponseMessageAll(int roomNum, CPacket* pPacket, UINT64 accountNo)
+{
+	SendRoomAll(roomNum, pPacket, accountNo);
+	pPacket->subRef();
 }
 
 // Ready, Start
 
 // PutStone
 
-void CServer::PutStone(unsigned __int64 sId, CPacket* pRecvPacket)
+void CServer::MakeResponsePutStonePacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE flag, BYTE x, BYTE y)
 {
-	uintptr_t accountNo;
-	WORD roomNo;
-	BYTE x, y;
-	BYTE position;
+	const auto packetType = static_cast<WORD>(en_PutStoneResponse);
+	if (pUser == nullptr || pRoom == nullptr)
+	{
+		DebugBreak();
+		return;
+	}
+	pPacket->Clear();
 
-	// type << accountNo << roomNo << position << x << y;
+	BYTE position = pUser->GetCurrentState();
+	*pPacket << packetType << pUser->GetCurrentAccountNo() << pRoom->GetCurrentRoomNumber() << flag;
+	*pPacket << x << y << position;
+}
 
-	*pRecvPacket >> accountNo >> roomNo >> position >> x >> y;
+
+void CServer::GameOverProcedure(CUser*pUser, CChatRoom* pRoom, int endFlag)
+{
+	// game 끝났다 보내기
+	auto pGameOverPacket = CPacket::Alloc();
+	pGameOverPacket->AddRef();
+	
+	if (pUser->GetCurrentState() == 1)
+	{
+		uintptr_t oppAccountNo = pRoom->GetPlayer2AccountNo();
+		auto oppUser = pRoom->FindUser(oppAccountNo);
+		MakeGameOverPacket(pUser, oppUser, pRoom, pGameOverPacket, endFlag);
+	}
+	else
+	{
+		uintptr_t oppAccountNo = pRoom->GetPlayer1AccountNo();
+		auto oppUser = pRoom->FindUser(oppAccountNo);
+		
+		MakeGameOverPacket(pUser, oppUser,  pRoom, pGameOverPacket, endFlag);
+	}
+	SendRoomAll(pRoom->GetCurrentRoomNumber(), pGameOverPacket);
+	pGameOverPacket->subRef();
+	
+	// Game 기수 정보 보내기. TODO
+}
+void CServer::PutStone(unsigned __int64 sId, CPacket* pPacket)
+{
+	uintptr_t recvAccountNo;
+	WORD recvRoomNo;
+	BYTE recvX, recvY;
+	BYTE recvPosition;
+
+	//// type << accountNo << roomNo << position << x << y;
+	*pPacket >> recvAccountNo >> recvRoomNo >> recvPosition >> recvX >> recvY;
+
 	auto userIt = userManager.find(sId);
 	if (userIt == userManager.end())
 		DebugBreak();
 
-	CUser* pUser = userIt->second;
-	if (accountNo != pUser->GetCurrentAccountNo())
+	auto pUser = userIt->second;
+	if (recvAccountNo != pUser->GetCurrentAccountNo())
 	{
 		DebugBreak();
+		return;
 	}
 
-	WORD roomId = pUser->GetCurrentRoom();
-	if (roomId != roomNo)
+	auto roomNo = pUser->GetCurrentRoom();
+	if (recvRoomNo != roomNo)
 	{
 		DebugBreak();
+		return;
 	}
 
-	auto roomIt = _roomManager.find(roomNo);
-	if (roomIt == _roomManager.end())
+	auto pRoom = FindRoom(roomNo);
+	if (pRoom == nullptr)
 	{
 		DebugBreak();
+		return;
 	}
-	CChatRoom* pRoom = roomIt->second;
-
 
 	BYTE flag = true;
 	if (!pRoom->IsGameing())
@@ -1380,210 +1801,41 @@ void CServer::PutStone(unsigned __int64 sId, CPacket* pRecvPacket)
 
 	// turn 확인 필요.
 	BYTE curTurn = pRoom->GetCurrentTurn();
-	if (curTurn != position)				
+	if (curTurn != (recvPosition - 1))
 	{
 		flag = false;
 	}
 
-	if (!(position == 1 || position == 2))
+	if (!(recvPosition == 1 || recvPosition == 2))
 	{
 		flag = false;
 	}
 
 	// 좌표 계산 + 이미 두었는지 확인.
-	if (!pRoom->PossibleStone(x, y))
+	if (!pRoom->PossibleStone(recvX, recvY))
 	{
 		flag = false;
 	}
 
-	pRecvPacket->Clear();
-	WORD type = en_PutStoneResponse;
-	*pRecvPacket << type << accountNo << roomId << flag;
+	MakeResponsePutStonePacket(pUser, pRoom, pPacket, flag, recvX, recvY);
 
 	if (flag)
 	{
-
-		pRoom->PutStone(x, y, position);
-		pRoom->ProcessRecord(x, y);
-		pRoom->NextTurn();
-
-		*pRecvPacket << x << y << position;
-		if (position == 1)
+		pRoom->PlaceStoneWrapper(recvX, recvY, recvPosition);
+		pRoom->TurnEnd();
+		SendRoomAll(roomNo, pPacket);
+		
+		auto endFlag = pRoom->CheckGameOverWrapper(recvX, recvY, recvPosition);
+		if (endFlag)
 		{
-			BYTE nextPosition = 2;
-			*pRecvPacket << nextPosition;
-		}
-		else if (position == 2)
-		{
-			BYTE nextPosition = 1;
-			*pRecvPacket << nextPosition;
-		}
-		else
-		{
-			DebugBreak();
-		}
-		SendRoomAll(roomId, pRecvPacket);
-
-		// 이겼는지 판단.
-
-		bool gameEndFlag = pRoom->GameEnd(x, y, position);
-		if (gameEndFlag)
-		{
-			CUser* pOppUser = nullptr;
-			if (position == 1)
-			{
-				uintptr_t oppSessionId = pRoom->GetPlayer2SessionId();
-				auto oppUserIt = userManager.find(oppSessionId);
-				if (oppUserIt == userManager.end())
-				{
-					DebugBreak();
-				}
-
-				pUser->Win();
-				pOppUser = oppUserIt->second;
-				if (pRoom->GetPlayer2AccountNo() != pOppUser->GetCurrentAccountNo())
-					DebugBreak();
-				pOppUser->Lost();
-				pOppUser->ReadyClear();
-			}
-			else if (position == 2)
-			{
-				uintptr_t oppSessionId = pRoom->GetPlayer1SessionId();
-				auto oppUserIt = userManager.find(oppSessionId);
-				if (oppUserIt == userManager.end())
-				{
-					DebugBreak();
-				}
-
-				pUser->Win();
-				pOppUser = oppUserIt->second;
-				if (pRoom->GetPlayer1AccountNo() != pOppUser->GetCurrentAccountNo())
-					DebugBreak();
-				pOppUser->Lost(); 
-				pOppUser->ReadyClear();
-			}
-			if (position == 3)
-				DebugBreak();
-			pUser->ReadyClear();
-			
-			pRoom->GameEnd();
-
-			// 패킷 쏘기
-			CPacket* pGamePacket = CPacket::Alloc();
-			pGamePacket->AddRef();
-			pGamePacket->Clear();
-			WORD type = en_GameOverResponse;
-			BYTE nickLen;
-
-			*pGamePacket << type << roomId << position;
-
-			const std::string winNick = pUser->GetMyNickname();
-			nickLen = winNick.size();
-			*pGamePacket << nickLen;
-			pGamePacket->PutData((char *)winNick.c_str(), nickLen);
-
-			const std::string loseNick = pOppUser->GetMyNickname();
-			nickLen = loseNick.size();
-			*pGamePacket << nickLen;
-			pGamePacket->PutData((char*)loseNick.c_str(), nickLen);
-
-			SendRoomAll(roomId, pGamePacket);
-			pGamePacket->subRef();
+			GameOverProcedure(pUser, pRoom, endFlag);
 		}
 	}
 	else
 	{
-		SendMessages(sId, pRecvPacket);
+		SendMessages(sId, pPacket);
 	}
-	pRecvPacket->subRef();
-	// [좌표 계산]
-	// 1. 좌표가 밖인지 조사
-	// 2. 이미 돌이 있는지 조사
 
-	// 4. 돌 두기.
-	// 스택에 저장해야 함.(player 가 넣었는지 저장).
-	// 4-1. 응답 주기.
-	// 4-2. 끝났는지 확인.
-	// 4-3. 끝났다고 알려주기.
-	// 4-4. DB 저장 요청.
 
-	// 
-	
+	pPacket->subRef();
 }
-
-
-//void ItemShop()	// ItemList 주기.
-//{
-//	// Item List를 줘야함.
-//	// 번호, 아이템 이름, 가격, 설명.
-//}
-//
-//void purchaseItem(uintptr_t sId, CPacket *pPacket)	// 아이템 구매 패킷 받음.
-//{
-//
-//	// accountNo랑 itemId랑, 가격, 수량
-//
-//	// 있는 애인지
-//
-//
-//	// 아이템id를 통해서 가격이 얼마인지 확인 잘못된 패킷 확인
-//
-//	// 돈이 있는지 검사.
-//
-//
-//	// 차감하고, DB에 저장.
-//
-//	// accountNo, itemId, 수량, 얼마 차감. 로그 기록
-//	// accountNo 가 획득 아이템 수량에 넣어줌.
-//
-//	// Response 넣기.
-//}
-
-
-
-
-
-
-
-
-
-// Item 상점
-// 1. 리스트 가격 주기
-// 2. 
-// 
-// Item 쓰기는 게임이 끝나고 차감.
-// 
-
-
-
-// 
-
-// ItemShop에 관한 클래스가 하나 나와야 함.
-// DB에 관한 클래스가 나와야함.
-// 모니터링에 관한 클래스가 나와야 함.
-
-
-// Todo 7-29
-// PutStone 마무리
-
-
-// item List
-//itemid, item이름, 설명, 골드
-//1. 무르기 권
-//2. 시간 연장권
-//3. 닉네임 변경권
-//4. 초상화
-//
-//아이템_유저
-//유저    아이템ID  갯수
-//hena     1         -> delete
-//
-//
-//
-//
-//아이템로그
-//유저	아이템id 시간 구매/사용
-//hena	1         1	  1
-//hena	2		  2   2
-//hena	1         2
-

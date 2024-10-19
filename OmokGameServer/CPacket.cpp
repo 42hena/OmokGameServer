@@ -4,34 +4,18 @@
 
 CBucketPool<CPacket> CPacket::pool;
 
-// ##################################################
-// #            Default Constructor                 #
-// ##################################################
-
 CPacket::CPacket()
-	: iBufferSize(512), refCount(0), headerSize(5), encodeFlag(0)
+	: iBufferSize(512), refCount(0), headerSize(2), encodeFlag(0)
 {
 	buffer = new char[iBufferSize];
 	pPush = pPop = buffer + headerSize;
 	checksum = pPush - 1;
 }
 
-// ##################################################
-// #                   Constructor                  #
-// ##################################################
-
-// ##################################################
-// #                   Desstructor                  #
-// ##################################################
-
 CPacket::~CPacket()
 {
 	delete[] buffer;
 }
-
-// ##################################################
-// #                   Utils                        #
-// ##################################################
 
 void	CPacket::Clear(void)
 {
@@ -73,7 +57,7 @@ void		CPacket::GetCheckData(char* chpDest, int iSrcSize)
 }
 
 
-int		CPacket::PutData(char* chpSrc, int iSrcSize)
+int		CPacket::PutData(const char* chpSrc, int iSrcSize)
 {
 	if (iSrcSize <= 0 || pPush + iSrcSize > buffer + iBufferSize)
 		DebugBreak();
@@ -408,4 +392,16 @@ int CPacket::Decoding()
 	}*/
 
 	return true;
+}
+
+CPacket* InitPacket()
+{
+	
+	auto pNewPacket = CPacket::Alloc();
+	auto refCnt = pNewPacket->AddRef();	// type(long)
+	if (refCnt != 1)
+		DebugBreak();
+
+	return pNewPacket;
+	
 }
