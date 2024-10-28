@@ -19,6 +19,9 @@
     <Filter Include="헤더 파일\완성">
       <UniqueIdentifier>{20d152b6-0af4-4b95-ae5d-9ba8e11ba02f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="헤더 파일\NewFilter1">
+      <UniqueIdentifier>{d1f47085-5919-46ca-89df-30308f285003}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -62,28 +65,10 @@
     <ClInclude Include="CServer.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="CPacket.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="CLFQueue.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="CLFStack.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
     <ClInclude Include="Protocol.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="CUser.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
-    <ClInclude Include="IShop.h">
-      <Filter>헤더 파일\보류</Filter>
-    </ClInclude>
-    <ClInclude Include="IGame.h">
-      <Filter>헤더 파일\보류</Filter>
-    </ClInclude>
-    <ClInclude Include="CPool.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
     <ClInclude Include="COmokBoard.h">
@@ -101,11 +86,20 @@
     <ClInclude Include="UserRoomInfo.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="CMonitoring.h">
-      <Filter>헤더 파일\보류</Filter>
-    </ClInclude>
     <ClInclude Include="CPDH.h">
       <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="CLFQueue.h">
+      <Filter>헤더 파일\NewFilter1</Filter>
+    </ClInclude>
+    <ClInclude Include="CLFStack.h">
+      <Filter>헤더 파일\NewFilter1</Filter>
+    </ClInclude>
+    <ClInclude Include="CPacket.h">
+      <Filter>헤더 파일\NewFilter1</Filter>
+    </ClInclude>
+    <ClInclude Include="CPool.h">
+      <Filter>헤더 파일\NewFilter1</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

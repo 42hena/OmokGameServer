@@ -301,6 +301,10 @@ public:
 		_omokBoard.ResetOmok();
 		_omokBoard.GameStart();
 	}
+	void EndGameSetting()
+	{
+		_omokBoard.GameOver();
+	}
 private:
 	//bool _gameFlag = 0;
 	SPlayerData _players[2];

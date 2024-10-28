@@ -120,3 +120,9 @@ void COmokBoard::GameStart()
     // gameFlag
     ChangeModeToGameStart();
 }
+
+void COmokBoard::GameOver()
+{
+    // gameFlag
+    ChangeModeToGameOver();
+}

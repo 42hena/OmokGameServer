@@ -129,14 +129,8 @@ public:
 
 public:
 public:
-	CPacket* MakeCreateRoomPacket(CUser*, WORD);
-	CPacket* MakeGracefulShutdownPacket(CUser*);
-	CPacket* MakeEnterRoomPacket(CUser* user, CChatRoom* room, BYTE status);
-	CPacket* MakeEnterRoomAlarmPacket(CUser* user, CChatRoom* room);
-	CPacket* MakeGetUserListPacket(CUser* user, CChatRoom* room);
+
 	
-	
-	CPacket* MakeLeaveRoomPacket(CUser* user, CChatRoom* room, BYTE status);
 	void MakeGetUserListPacket(CUser* user, CChatRoom* room, CPacket* packet);	// 304
 
 

@@ -41,29 +41,27 @@ void RunServer()
 		if (_kbhit())
 		{
 			keyboard = _getch();
-			/*		
+					
 			if (keyboard == 'z')
 			{
 				keyFlag = !keyFlag;
 				wprintf(L"Mode Change\n");
 			}
-			if (keyFlag && keyboard == 's')
+			if (keyFlag && keyboard == 's')	// 추가해야 함.
 			{
 				wprintf(L"Save\n");
 			}
-			if (keyFlag && keyboard == 'l')
+			if (keyFlag && keyboard == 'q')
 			{
-
+				break;
 			}
-
-			if (keyFlag && keyboard == 'm')
-			{
-				server.ConnectToMonitorServer();
-			}*/
 		}
 		Sleep(1000);
 	}
 }
+
+int b;
+int c;
 
 int main()
 {

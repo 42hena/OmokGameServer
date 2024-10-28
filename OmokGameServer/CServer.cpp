@@ -283,18 +283,6 @@ unsigned int CServer::MonitorThread(LPVOID param)
 		total = 0;
 		
 		flag = 0;
-		// CPU Mem 줄 cpu, mem
-		
-
-		//flag, cpu, mem, sessionCnt, playerCnt, updateTPS, packetPoolCnt, JobPoolCnt;
-		//sessionCnt = ptr->GetUser();
-		//playerCnt = accountManager.size();// 삭제
-
-		//updateTPS = ptr->GetMonitoringUpdateCount();
-		//packetPoolCnt = CPacket::GetUseNode();
-		//JobPoolCnt = jobQ.GetSize();
-
-		
 
 		wprintf(L"================================================================================\n");
 		wprintf(L"S: Stop Or Play(Not implemented) | Q: Quit\n");
@@ -464,19 +452,18 @@ void CServer::LoginProcedure(unsigned __int64 id, CPacket* pPacket)
 	nickNameBuffer[recvNickLen] = 0;
 
 
-	// 이미 접속.
+	// 이미 로그인한 경우
 	auto it = _accountKey.find(recvAccountNo);
 	if (it != _accountKey.end())
 	{
-		SSession* s = FindSession(it->second);
-		wprintf(L"IP:%s port:%d\n", s->clientIP, s->port);
+		auto oldSession = FindSession(it->second);
+		wprintf(L"IP:%s port:%d\n", oldSession->clientIP, oldSession->port);
 		wprintf(L"-----------------------------------------------------\n");
 		wprintf(L"-----------------------------------------------------\n");
 		wprintf(L"-----------------------------------------------------\n");
-		DebugBreak();
 		
-		//1 방금 접속한 사람 끊기
-		Disconnect(id);
+		// 이전 세션을 접속 해제
+		Disconnect(oldSession->sessionID);
 		return;
 	}
 
@@ -700,30 +687,6 @@ void CServer::MakeCreateRoomPacket(CUser* pIser, CPacket* pPacket, WORD roomNo)
 	*pPacket << type << accountNo << roomNo;
 }
 
-//CPacket* CServer::MakeCreateRoomPacket(CUser* pUser, WORD roomNo)
-//{
-//	const auto type = static_cast<WORD>(en_CreateRoomResponse);	// type(WORD)
-//
-//	if (pUser == nullptr)
-//	{
-//		DebugBreak();
-//		return nullptr;
-//	}
-//
-//	auto pCreateRoomPacket = InitPacket();			// type(CPacket *)
-//	auto accountNo = pUser->GetCurrentAccountNo();	// type(uintptr_t)
-//
-//	*pCreateRoomPacket << type << accountNo << roomNo;
-//
-//	return pCreateRoomPacket;
-//}
-
-
-CPacket* CServer::MakeEnterRoomAlarmPacket(CUser* user, CChatRoom* room)
-{
-	return nullptr;
-}
-
 void CServer::MakeResponseGracefulShutdownPacket(CUser* pUser, CPacket* pPacket)
 {
 	const auto type = static_cast<WORD>(en_GracefulShutdownResponse);	// type(WORD)
@@ -825,28 +788,6 @@ void CServer::CreateRoomProcedure(unsigned __int64 id, CPacket* pPacket)
 	//auto pPacket = MakeCreateRoomPacket(pUser, roomNum);	// type(CPacket *)
 	SendResponseMessage(id, pPacket);
 }
-
-//CPacket* CServer::MakeEnterRoomPacket(CUser* pUser, CChatRoom* pRoom, BYTE status)
-//{
-//	const auto packetType = static_cast<WORD>(en_EnterRoomResponse);
-//	if (pUser == nullptr || pRoom == nullptr)
-//	{
-//		DebugBreak();
-//		return nullptr;
-//	}
-//
-//	auto pEnterRoomPacket = InitPacket();
-//	auto accountNo = pUser->GetCurrentAccountNo();	// type(uintptr_t)
-//	auto roomNo = pRoom->GetCurrentRoomNumber();	// type(WORD)
-//
-//	if (status)
-//	{
-//		if (pRoom->IsGameing())
-//			status = 2;
-//	}
-//	*pEnterRoomPacket << packetType << accountNo << roomNo << status;
-//	return nullptr;
-//}
 
 void CServer::MakeResponseEnterRoomPacket(CUser* pUser, CChatRoom* pRoom, CPacket* pPacket, BYTE status)
 {
@@ -1390,7 +1331,6 @@ void CServer::ChangePosition(unsigned __int64 id, CPacket* pPacket)
 	if (pRoom->IsGameing())
 	{
 		flag = false;
-		DebugBreak();	// 가능할 수 있음.
 	}
 	
 	if (pUser->GetCurrentState() == to || pUser->GetCurrentState() != from)
@@ -1744,20 +1684,22 @@ void CServer::GameOverProcedure(CUser*pUser, CChatRoom* pRoom, int endFlag)
 	{
 		uintptr_t oppAccountNo = pRoom->GetPlayer2AccountNo();
 		auto oppUser = pRoom->FindUser(oppAccountNo);
+		pUser->GameClear();
+		oppUser->GameClear();
 		MakeGameOverPacket(pUser, oppUser, pRoom, pGameOverPacket, endFlag);
 	}
 	else
 	{
 		uintptr_t oppAccountNo = pRoom->GetPlayer1AccountNo();
 		auto oppUser = pRoom->FindUser(oppAccountNo);
-		
+		pUser->GameClear();
+		oppUser->GameClear();
 		MakeGameOverPacket(pUser, oppUser,  pRoom, pGameOverPacket, endFlag);
 	}
 	SendRoomAll(pRoom->GetCurrentRoomNumber(), pGameOverPacket);
 	pGameOverPacket->subRef();
-	
-	// Game 기수 정보 보내기. TODO
 }
+
 void CServer::PutStone(unsigned __int64 sId, CPacket* pPacket)
 {
 	uintptr_t recvAccountNo;
@@ -1828,6 +1770,7 @@ void CServer::PutStone(unsigned __int64 sId, CPacket* pPacket)
 		auto endFlag = pRoom->CheckGameOverWrapper(recvX, recvY, recvPosition);
 		if (endFlag)
 		{
+			pRoom->EndGameSetting();
 			GameOverProcedure(pUser, pRoom, endFlag);
 		}
 	}

@@ -31,6 +31,7 @@ public:
     
     // gameFlag    
     void GameStart();
+    void GameOver();
     inline bool IsGameing() const { return _gameFlag; }
     inline void ChangeModeToGameStart() { _gameFlag = 1; }
     inline void ChangeModeToGameOver() { _gameFlag = 0; }

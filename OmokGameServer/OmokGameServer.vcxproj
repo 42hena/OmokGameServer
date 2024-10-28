@@ -141,7 +141,6 @@
   <ItemGroup>
     <ClInclude Include="CLFQueue.h" />
     <ClInclude Include="CLFStack.h" />
-    <ClInclude Include="CMonitoring.h" />
     <ClInclude Include="CNetLibrary.h" />
     <ClInclude Include="COmokBoard.h" />
     <ClInclude Include="CPacket.h" />
@@ -151,10 +150,6 @@
     <ClInclude Include="CServer.h" />
     <ClInclude Include="CUser.h" />
     <ClInclude Include="GameRecord.h" />
-    <ClInclude Include="IGame.h">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="IShop.h" />
     <ClInclude Include="Protocol.h" />
     <ClInclude Include="UserHistory.h" />
     <ClInclude Include="UserRoomInfo.h" />
