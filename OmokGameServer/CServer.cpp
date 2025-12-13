@@ -158,14 +158,16 @@ void CServer::ReleaseUser(unsigned __int64 sID)
 	auto roomIt = _roomManager.find(roomNo);
 	if (roomIt == _roomManager.end())
 	{
-		int a = 0;;
+		if (accountNo && roomNo == 0)
+		{
+			LobbyDown();
+		}
 	}
 	else
 	{
 		CChatRoom* pRoom = roomIt->second;
 		pRoom->EraseUser(accountNo);
 		RoomDown();
-
 	}
 	if (accountNo == 0)
 		DebugBreak();
@@ -515,10 +517,11 @@ void CServer::Recv(unsigned __int64 id, CPacket* pPacket)
 	//{
 	//	break;
 	//}
-	//case en_RoomListRequest:	// 보류	
-	//{
-	//	break;
-	//}
+	case en_RoomListRequest:	// 보류	
+	{
+		RoomList(id, pPacket);
+		break;
+	}
 	case en_CreateRoomRequest:	// ***
 	{
 		CreateCountUp();
@@ -592,24 +595,24 @@ void CServer::MakeResponseGetRoomList(USHORT idx, CUser* pUser, CPacket* pPacket
 	pPacket->Clear();
 
 	auto accountNo = pUser->GetCurrentAccountNo();
-	BYTE count = 0;
-	*pPacket << packetType << accountNo << idx;
-
-	auto roomSize = _roomManager.size();
-	if (roomSize > 0)
+	USHORT count = 0;
+	BYTE status = 0;
+	if (idx < 0 || idx > 50)
 	{
-		int maxIdx = (roomSize - 1) / 10 + 1;
-		count = min(roomSize - 10 * (idx - 1), 10);
-		auto it = _roomManager.begin();
-		std::advance(it, count - 1);
-		for (int i = 0; i < count && it != _roomManager.end(); ++i) {
-			auto pRoom = it->second;
-			auto roomNo = static_cast<USHORT>(pRoom->GetCurrentRoomNumber());
-			++it;
-		}
+
+		*pPacket << packetType << accountNo << status << count;
 	}
 	else
-		*pPacket << count;
+	{
+		status = 1;
+		count = 10;
+		*pPacket << packetType << accountNo << status << count;
+		for (USHORT i = 0; i < 10; ++i)
+		{
+			USHORT roomNo = (idx - 1) * 10 + i + 1;
+			*pPacket << roomNo;
+		}
+	}
 }
 
 void CServer::RoomList(unsigned __int64 id, CPacket* pRecvPacket)
@@ -618,53 +621,30 @@ void CServer::RoomList(unsigned __int64 id, CPacket* pRecvPacket)
 	USHORT recvIndex;
 	// -----
 
-	//// len | type | len, name[]
-	//*pRecvPacket >> recvAccountNo >> recvIndex;
+	// len | type | len, name[]
+	*pRecvPacket >> recvAccountNo >> recvIndex;
+
+	// CPacket 가공
+	CPacket* pResponsePacket;
+	const USHORT type = en_RoomListResponse;
+	pResponsePacket = pRecvPacket;
 
 
-	//// CPacket 가공
-	//CPacket* pResponsePacket;
-	//const USHORT type = en_RoomListResponse;
-	//pResponsePacket = pRecvPacket;
+	// len | type(2) | accountNo(8) roomCount(2), [num(2)]
+	pResponsePacket->Clear();
+	WORD roomCount = _roomManager.size();
 
+	
+	auto pUser = FindUser(id);
+	if (pUser == nullptr)
+	{
+		DebugBreak();
+	}
 
-	//// len | type(2) | accountNo(8) roomCount(2), [num(2)]
-	//pResponsePacket->Clear();
-	//WORD roomCount = _roomManager.size();
+	MakeResponseGetRoomList(recvIndex, pUser, pResponsePacket);
+	SendMessages(id, pResponsePacket);
 
-
-	//int r = roomCount % 40;
-	//int q = roomCount / 40;
-	//if (index < q)
-	//{
-	//	roomCount = 40;
-	//}
-	//else if (index == q)
-	//{
-	//	roomCount = r;
-	//}
-	//else
-	//	roomCount = 0;
-	//*pResponsePacket << type << accountNo << roomCount;
-
-	//int cnt = 0;
-	//for (auto it = _roomManager.begin(); it != _roomManager.end(); ++it)
-	//{
-	//	// TODO
-	//	if (cnt >= 40 * (index) && cnt < 40 * (index + 1))
-	//	{
-	//		CChatRoom* pRoom = it->second;
-	//		WORD lll = pRoom->GetCurrentRoomNumber();
-	//		*pResponsePacket << lll;
-	//		BYTE ss = pRoom->GetCurrentRoomName().size();
-	//		*pResponsePacket << ss;
-	//		pResponsePacket->PutData((char*)pRoom->GetCurrentRoomName().c_str(), ss);
-	//	}
-	//	cnt++;
-	//}
-	//SendMessages(sID, pResponsePacket);
-
-	//pResponsePacket->subRef();
+	pResponsePacket->subRef();
 }
 
 // | type(2) | accountNo(8) roomNo(2) roomLen(1) roomName(20) status(1)

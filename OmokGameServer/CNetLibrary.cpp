@@ -115,7 +115,7 @@ void CNetLibrary::ReleaseSession(unsigned __int64 sessionID)
 
 
 	indexPool.Push(FindArrayIndex(sessionID));
-	//InterlockedDecrement((long*)&sessionCount);
+	InterlockedDecrement((long*)&_sessionCount);
 	OnClientLeave(sessionID);
 }
 
